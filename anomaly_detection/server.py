@@ -8,6 +8,19 @@ from utils import get_data, get_model
 
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
+    # def aggregate_fit(
+    #     self,
+    #     rnd: int,
+    #     results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
+    #     failures: List[BaseException],
+    # ) -> Optional[fl.common.Weights]:
+    #     aggregated_weights = super().aggregate_fit(rnd, results, failures)
+    #     if aggregated_weights is not None:
+    #         # Save aggregated_weights
+    #         print(f"Saving round {rnd} aggregated_weights...")
+    #         np.savez(f"round-{rnd}-weights.npz", *aggregated_weights)
+    #     return aggregated_weights
+    
     def aggregate_evaluate(
         self,
         rnd: int,
@@ -24,6 +37,14 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         anomalies = np.sum([r.metrics["anomalies"] for _, r in results])
         print(f"Round {rnd} threshold averaged from client results: {threshold}")
         print(f"Round {rnd} total number of anomalies from client results: {anomalies}")
+
+        # Weigh loss of each client by number of examples used
+        losses = [r.loss * r.num_examples for _, r in results]
+        examples = [r.num_examples for _, r in results]
+
+        # Aggregate and print custom metric
+        loss_aggregated = sum(losses) / sum(examples)
+        print(f"Round {rnd} weighted loss aggregated from client results: {loss_aggregated}")
 
         # Call aggregate_evaluate from base class (FedAvg)
         return super().aggregate_evaluate(rnd, results, failures)
