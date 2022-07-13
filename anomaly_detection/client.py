@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 
 import flwr as fl
-
+from utils import get_data
 # Make TensorFlow logs less verbose
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -132,43 +132,12 @@ def load_partition(idx: int):
     """Load 1/5th of the training and test data to simulate a partition."""
     assert idx in range(5)
 
-    master_url_root = "https://raw.githubusercontent.com/numenta/NAB/master/data/"
+    x_train, x_test = get_data()
 
-    df_small_noise_url_suffix = "artificialNoAnomaly/art_daily_small_noise.csv"
-    df_small_noise_url = master_url_root + df_small_noise_url_suffix
-    df_small_noise = pd.read_csv(
-        df_small_noise_url, parse_dates=True, index_col="timestamp"
-    )
+    num_samples = x_train.shape[0] // 5
+    print("Num samples per partition:", num_samples)
 
-    df_daily_jumpsup_url_suffix = "artificialWithAnomaly/art_daily_jumpsup.csv"
-    df_daily_jumpsup_url = master_url_root + df_daily_jumpsup_url_suffix
-    df_daily_jumpsup = pd.read_csv(
-        df_daily_jumpsup_url, parse_dates=True, index_col="timestamp"
-    )
-
-    training_mean = df_small_noise.mean()
-    training_std = df_small_noise.std()
-    df_training_value = (df_small_noise - training_mean) / training_std
-
-    TIME_STEPS = 288
-
-    # Generated training sequences for use in the model.
-    def create_sequences(values, time_steps=TIME_STEPS):
-        output = []
-        for i in range(len(values) - time_steps + 1):
-            output.append(values[i : (i + time_steps)])
-        return np.stack(output)
-
-
-    x_train = create_sequences(df_training_value.values)
-
-    # Prepare test data
-    df_test_value = (df_daily_jumpsup - training_mean) / training_std
-
-    # Create sequences from test values.
-    x_test = create_sequences(df_test_value.values)
-    
-    return x_train[idx * 749 : (idx + 1) * 749], x_test[idx * 749 : (idx + 1) * 749]
+    return x_train[idx * num_samples : (idx + 1) * num_samples], x_test[idx * num_samples : (idx + 1) * num_samples]
 
 
 if __name__ == "__main__":
