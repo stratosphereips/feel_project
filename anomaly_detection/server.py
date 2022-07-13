@@ -4,7 +4,8 @@ from pathlib import Path
 import flwr as fl
 import tensorflow as tf
 import numpy as np
-from utils import get_data
+from utils import get_data, get_model
+
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
     def aggregate_evaluate(
@@ -13,11 +14,12 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]],
         failures: List[BaseException],
     ) -> Optional[float]:
-        """Aggregate evaluation losses using weighted average."""
+        """Average thresholds and sum anomalies."""
         if not results:
             return None
 
-        # Weigh accuracy of each client by number of examples used
+        # No need to weigh using the number of examples because they are the same
+        # but in general we may want to take this into account
         threshold = np.mean([r.metrics["threshold"]  for _, r in results])
         anomalies = np.sum([r.metrics["anomalies"] for _, r in results])
         print(f"Round {rnd} threshold averaged from client results: {threshold}")
@@ -26,40 +28,15 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         # Call aggregate_evaluate from base class (FedAvg)
         return super().aggregate_evaluate(rnd, results, failures)
 
-
-
 def main() -> None:
     # Load and compile model for
     # 1. server-side parameter initialization
     # 2. server-side parameter evaluation
     TIME_STEPS = 288
 
-    model = tf.keras.Sequential(
-    [
-        tf.keras.layers.Input(shape=(TIME_STEPS, 1)),
-        tf.keras.layers.Conv1D(
-            filters=32, kernel_size=7, padding="same", strides=2, activation="relu"
-        ),
-        tf.keras.layers.Dropout(rate=0.2),
-        tf.keras.layers.Conv1D(
-            filters=16, kernel_size=7, padding="same", strides=2, activation="relu"
-        ),
-        tf.keras.layers.Conv1DTranspose(
-            filters=16, kernel_size=7, padding="same", strides=2, activation="relu"
-        ),
-        tf.keras.layers.Dropout(rate=0.2),
-        tf.keras.layers.Conv1DTranspose(
-            filters=32, kernel_size=7, padding="same", strides=2, activation="relu"
-        ),
-        tf.keras.layers.Conv1DTranspose(filters=1, kernel_size=7, padding="same"),
-    ]
-    )
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss="mse")
+    model = get_model()
 
-
-    # Create strategy
-
-
+    # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
         fraction_fit=1.0,
         fraction_eval=1.0,
@@ -98,14 +75,13 @@ def get_eval_fn(model):
         model.set_weights(weights)  # Update model with the latest parameters
         loss = model.evaluate(x_test, x_test)
 
-        # Calculate the threshold
         # Ideally the threshold should be averaged over all the thresholds instead
-        # but I don't know how to do that easily
-        # Instead look at the aggregate client results for the correct metrics
+        # but I don't know how to do that easily.
+        # Instead look at the aggregate client results for the correct metrics.
         x_train_pred = model.predict(x_train)
         train_mae_loss = np.mean(np.abs(x_train_pred - x_train), axis=1)
 
-        # Get reconstruction loss threshold.
+        # Get reconstruction loss threshold from training data.
         threshold = np.max(train_mae_loss)
 
         x_test_pred = model.predict(x_test)

@@ -3,11 +3,10 @@ import os
 from pathlib import Path
 
 import tensorflow as tf
-import pandas as pd
 import numpy as np
 
 import flwr as fl
-from utils import get_data
+from utils import get_data, get_model
 # Make TensorFlow logs less verbose
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -93,28 +92,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Load and compile Keras model
-    model = tf.keras.Sequential(
-    [
-        tf.keras.layers.Input(shape=(288, 1)),
-        tf.keras.layers.Conv1D(
-            filters=32, kernel_size=7, padding="same", strides=2, activation="relu"
-        ),
-        tf.keras.layers.Dropout(rate=0.2),
-        tf.keras.layers.Conv1D(
-            filters=16, kernel_size=7, padding="same", strides=2, activation="relu"
-        ),
-        tf.keras.layers.Conv1DTranspose(
-            filters=16, kernel_size=7, padding="same", strides=2, activation="relu"
-        ),
-        tf.keras.layers.Dropout(rate=0.2),
-        tf.keras.layers.Conv1DTranspose(
-            filters=32, kernel_size=7, padding="same", strides=2, activation="relu"
-        ),
-        tf.keras.layers.Conv1DTranspose(filters=1, kernel_size=7, padding="same"),
-    ]
-    )
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss="mse")
-
+    model = get_model()
 
     x_train, x_test = load_partition(args.partition)
 

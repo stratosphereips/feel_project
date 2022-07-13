@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
-from tensorflow import keras
-from tensorflow.keras import layers
+import tensorflow as tf
+# from tensorflow import keras
+# from tensorflow.keras import layers
 
 master_url_root = "https://raw.githubusercontent.com/numenta/NAB/master/data/"
 
@@ -40,27 +41,27 @@ def create_sequences(values, time_steps=TIME_STEPS):
 x_train = create_sequences(df_training_value.values)
 print("Training input shape: ", x_train.shape)
 
-model = keras.Sequential(
+model = tf.keras.Sequential(
     [
-        layers.Input(shape=(x_train.shape[1], x_train.shape[2])),
-        layers.Conv1D(
+        tf.keras.layers.Input(shape=(x_train.shape[1], x_train.shape[2])),
+        tf.keras.layers.Conv1D(
             filters=32, kernel_size=7, padding="same", strides=2, activation="relu"
         ),
-        layers.Dropout(rate=0.2),
-        layers.Conv1D(
+        tf.keras.layers.Dropout(rate=0.2),
+        tf.keras.layers.Conv1D(
             filters=16, kernel_size=7, padding="same", strides=2, activation="relu"
         ),
-        layers.Conv1DTranspose(
+        tf.keras.layers.Conv1DTranspose(
             filters=16, kernel_size=7, padding="same", strides=2, activation="relu"
         ),
-        layers.Dropout(rate=0.2),
-        layers.Conv1DTranspose(
+        tf.keras.layers.Dropout(rate=0.2),
+        tf.keras.layers.Conv1DTranspose(
             filters=32, kernel_size=7, padding="same", strides=2, activation="relu"
         ),
-        layers.Conv1DTranspose(filters=1, kernel_size=7, padding="same"),
+        tf.keras.layers.Conv1DTranspose(filters=1, kernel_size=7, padding="same"),
     ]
 )
-model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.001), loss="mse")
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss="mse")
 model.summary()
 
 history = model.fit(
@@ -70,7 +71,7 @@ history = model.fit(
     batch_size=128,
     validation_split=0.1,
     callbacks=[
-        keras.callbacks.EarlyStopping(monitor="val_loss", patience=5, mode="min")
+        tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=5, mode="min")
     ],
 )
 

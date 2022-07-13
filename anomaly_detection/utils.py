@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import tensorflow as tf
 
 TIME_STEPS = 288
 
@@ -41,4 +42,27 @@ def get_data():
 
     return x_train, x_test
 
-    
+def get_model():
+    model = tf.keras.Sequential(
+    [
+        tf.keras.layers.Input(shape=(TIME_STEPS, 1)),
+        tf.keras.layers.Conv1D(
+            filters=32, kernel_size=7, padding="same", strides=2, activation="relu"
+        ),
+        tf.keras.layers.Dropout(rate=0.2),
+        tf.keras.layers.Conv1D(
+            filters=16, kernel_size=7, padding="same", strides=2, activation="relu"
+        ),
+        tf.keras.layers.Conv1DTranspose(
+            filters=16, kernel_size=7, padding="same", strides=2, activation="relu"
+        ),
+        tf.keras.layers.Dropout(rate=0.2),
+        tf.keras.layers.Conv1DTranspose(
+            filters=32, kernel_size=7, padding="same", strides=2, activation="relu"
+        ),
+        tf.keras.layers.Conv1DTranspose(filters=1, kernel_size=7, padding="same"),
+    ]
+    )
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss="mse")
+
+    return model
