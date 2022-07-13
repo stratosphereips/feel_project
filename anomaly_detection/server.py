@@ -1,10 +1,32 @@
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from pathlib import Path
 
 import flwr as fl
 import tensorflow as tf
 import pandas as pd
 import numpy as np
+
+class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
+    def aggregate_evaluate(
+        self,
+        rnd: int,
+        results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]],
+        failures: List[BaseException],
+    ) -> Optional[float]:
+        """Aggregate evaluation losses using weighted average."""
+        if not results:
+            return None
+
+        # Weigh accuracy of each client by number of examples used
+        threshold = np.mean([r.metrics["threshold"]  for _, r in results])
+        anomalies = np.sum([r.metrics["anomalies"] for _, r in results])
+        print(f"Round {rnd} threshold averaged from client results: {threshold}")
+        print(f"Round {rnd} total number of anomalies from client results: {anomalies}")
+
+        # Call aggregate_evaluate from base class (FedAvg)
+        return super().aggregate_evaluate(rnd, results, failures)
+
+
 
 def main() -> None:
     # Load and compile model for
@@ -36,9 +58,11 @@ def main() -> None:
 
 
     # Create strategy
-    strategy = fl.server.strategy.FedAvg(
-        fraction_fit=0.8,
-        fraction_eval=0.2,
+
+
+    strategy = AggregateCustomMetricStrategy(
+        fraction_fit=1.0,
+        fraction_eval=1.0,
         min_fit_clients=3,
         min_eval_clients=1,
         min_available_clients=5,
@@ -110,6 +134,9 @@ def get_eval_fn(model):
     ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
         model.set_weights(weights)  # Update model with the latest parameters
         loss = model.evaluate(x_test, x_test)
+
+        # Calculate the threshold
+        # Ideally the threshold should be averaged over all the thresholds instead
         x_train_pred = model.predict(x_train)
         train_mae_loss = np.mean(np.abs(x_train_pred - x_train), axis=1)
 

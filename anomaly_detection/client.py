@@ -69,7 +69,21 @@ class ADClient(fl.client.NumPyClient):
         # Evaluate global model parameters on the local test data and return results
         loss = self.model.evaluate(self.x_test, self.x_test, 32, steps=steps)
         num_examples_test = len(self.x_test)
-        return loss, num_examples_test, {"loss": loss}
+
+        x_train_pred = self.model.predict(self.x_train)
+        train_mae_loss = np.mean(np.abs(x_train_pred - self.x_train), axis=1)
+
+        # Get reconstruction loss threshold.
+        threshold = np.max(train_mae_loss)
+
+        x_test_pred = self.model.predict(self.x_test)
+        test_mae_loss = np.mean(np.abs(x_test_pred - self.x_test), axis=1)
+        test_mae_loss = test_mae_loss.reshape((-1))
+
+        # Detect all the samples which are anomalies.
+        anomalies = test_mae_loss > threshold
+
+        return loss, num_examples_test, {"threshold": threshold, "anomalies": int(np.sum(anomalies))}
 
 
 def main() -> None:
@@ -115,8 +129,8 @@ def main() -> None:
 
 
 def load_partition(idx: int):
-    """Load 1/10th of the training and test data to simulate a partition."""
-    assert idx in range(10)
+    """Load 1/5th of the training and test data to simulate a partition."""
+    assert idx in range(5)
 
     master_url_root = "https://raw.githubusercontent.com/numenta/NAB/master/data/"
 
@@ -138,7 +152,7 @@ def load_partition(idx: int):
 
     TIME_STEPS = 288
 
-# Generated training sequences for use in the model.
+    # Generated training sequences for use in the model.
     def create_sequences(values, time_steps=TIME_STEPS):
         output = []
         for i in range(len(values) - time_steps + 1):
@@ -147,16 +161,14 @@ def load_partition(idx: int):
 
 
     x_train = create_sequences(df_training_value.values)
-    print("Train input shape: ", x_train.shape)
 
     # Prepare test data
     df_test_value = (df_daily_jumpsup - training_mean) / training_std
 
     # Create sequences from test values.
     x_test = create_sequences(df_test_value.values)
-    print("Test input shape: ", x_test.shape)
     
-    return x_train[idx * 800 : (idx + 1) * 800], x_test[idx * 600 : (idx + 1) * 600]
+    return x_train[idx * 749 : (idx + 1) * 749], x_test[idx * 749 : (idx + 1) * 749]
 
 
 if __name__ == "__main__":
