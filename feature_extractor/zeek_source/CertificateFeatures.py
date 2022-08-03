@@ -36,9 +36,9 @@ class CertificateFeatures:
         except:
             self.servernames_dict[server_name] = 1
 
-        if 'Botnet' in label:
+        if 'Malicious' in label:
             self.malware_labels += 1
-        if 'Normal' in label:
+        if 'Benign' in label or 'Background' in label:
             self.normal_labels += 1
 
     def contain_server_name(self, server_name):
