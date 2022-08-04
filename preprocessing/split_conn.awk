@@ -1,10 +1,10 @@
-#awk -v inc='300' -f awk.tst conn.log 
+# Run the script as follows:
+# awk -v inc='3600' -v out_dir="out_dir" -f tst.awk conn.log.labeled 
 {
-    #print $1
     bucket = int($1/inc)
-    # print int(bucket%inc) " " bucket*inc "-"  inc*(bucket+1)-1 " " NR 
-    # system("mkdir -p out_dir/"(bucket%inc))
-    # system("cp ssl.log.labeled out_dir/"(bucket%inc))
-    # print $0  > "out_dir/"(bucket%inc)"/conn."( (inc*bucket) "-" (inc*(bucket+1)-1) ".log" )
-    print $0  > "out_dir/conn."( (inc*bucket) "-" (inc*(bucket+1)-1) ".log" )
+    start = inc*bucket
+    # This one is ugly because it tries to create the dir for every line
+    # Can't find a better way to do this atm
+    system("mkdir -p out_dir/"(start))
+    print $0  >> out_dir"/"start"/conn."( (inc*bucket) "-" (inc*(bucket+1)-1) ".log" )
 }
