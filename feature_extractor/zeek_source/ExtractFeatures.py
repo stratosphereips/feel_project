@@ -261,7 +261,7 @@ class ExtractFeatures(object):
                 # Check Alexa 1000
                 dst_ip_and_src_ip = conn_split[2], conn_split[4]
                 server_name = ssl_split[9]
-                if 'Normal' in label:
+                if 'Benign' in label or 'Background' in label:
                     self.normal_ssl_aggregation += 1
                     for alexa_domain in self.alexa_1000_arr:
                         if alexa_domain in server_name or server_name in alexa_domain:
@@ -278,7 +278,7 @@ class ExtractFeatures(object):
                                 self.unique_normal_alexa_ssl_aggregation += 1
                                 break
 
-                if 'Botnet' in label:
+                if 'Malicious' in label:
                     self.malware_ssl_aggregation += 1
                     for alexa_domain in self.alexa_1000_arr:
                         if alexa_domain in server_name or server_name in alexa_domain:
