@@ -1,5 +1,0 @@
-Create a mega script that:
-1. Splits the conn.log.labeled in a number of files based on the increment value in seconds (time window)
-2. Based on the number of created files it creates directories and copies the split conn logs and the ssl.log.labeled inside
-3. Runs the feature extractor in each of the directories
-4. Concatenates the feature.csv files after removing the header (this can be done in python / pandas too).
