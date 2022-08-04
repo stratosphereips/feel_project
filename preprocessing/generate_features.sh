@@ -7,7 +7,7 @@ tw=$4
 
 if [[ $# -lt 4 ]] ; then
     echo 'Missing input arguments. Usage:'
-    echo './script.sh <input_dir> <output_dir> <extractor_dir> <time_window>'
+    echo './generate_features.sh <input_dir> <output_dir> <extractor_dir> <time_window>'
     exit 1
 fi
 
