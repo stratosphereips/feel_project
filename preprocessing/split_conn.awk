@@ -12,6 +12,4 @@
 
     # Put the whole line to the file in the correct bucket
     print $0  >> out_dir"/"start"/"fname"."( (inc*bucket) "-" (inc*(bucket+1)-1) ) ".log" 
-    
-    
 }

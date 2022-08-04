@@ -1,9 +1,9 @@
 # Preprocessing Scripts
 
 This folder contains all the preprocessing scripts.
-The main scripts works with a zeek folder that contains a `conn.log.labeled`, a `ssl.log.labeled` and a `x509.log` file.
-The `conn.log.labeled` is split into time windows and stored in separate directories.
-Then, the feature extractor script is ran in each of these directories and generates a `features.csv` file where possible.
+The main script works with a zeek folder that contains a `conn.log.labeled`, an `ssl.log.labeled` and a `x509.log` file.
+The `conn.log.labeled` and the `ssl.log.labeled` are split into time windows and stored in directories based on the respective time windows.
+Then, the feature extractor script is run in each of these directories and generates a `features.csv` file where possible.
 Finally the different `features.csv` files are combined into one file and stored into the initial zeek folder.
 
 ## Usage
