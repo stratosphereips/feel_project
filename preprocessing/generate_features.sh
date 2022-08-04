@@ -23,3 +23,10 @@ do
    cp $in_dir/ssl.log.labeled $out_dir/$folder
    python $extractor_path/feature_extractor.py -z $out_dir/$folder
 done
+
+# Combine all the CSVs that are in the extracted directory
+# and store them in the original input directory along with the los
+python combine_features.py -i $out_dir -o $in_dir 
+
+# Optional better to do it manually in case something bad happens :)
+# rm -rf $2/* 
