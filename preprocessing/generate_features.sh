@@ -12,15 +12,15 @@ if [[ $# -lt 4 ]] ; then
 fi
 
 
-# Split the conn.log.labeled into time windows 
-awk -v inc=$tw -v out_dir=$out_dir -f split_conn.awk $in_dir/conn.log.labeled
+# Split the conn.log.labeled and the ssl.log.labeled into the time windows 
+awk -v inc=$tw -v out_dir=$out_dir -f split_conn.awk $in_dir/conn.log.labeled $in_dir/ssl.log.labeled
 
-# Get all the genrated folders and copy the ssl and x509 logs
+# Get all the genrated folders and copy the x509 log
 folders=( `ls $2` )
 for folder in "${folders[@]}"
 do
    cp $in_dir/x509.log $out_dir/$folder
-   cp $in_dir/ssl.log.labeled $out_dir/$folder
+#    cp $in_dir/ssl.log.labeled $out_dir/$folder
    python $extractor_path/feature_extractor.py -z $out_dir/$folder
 done
 
