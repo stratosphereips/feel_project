@@ -38,7 +38,7 @@ class CertificateFeatures:
 
         if 'Malicious' in label:
             self.malware_labels += 1
-        if 'Benign' in label or 'Background' in label:
+        if 'Benign' in label:
             self.normal_labels += 1
 
     def contain_server_name(self, server_name):

@@ -18,10 +18,13 @@ def combine_files(folder_name):
     total_lines = 0
     folders = os.listdir(folder_name)
     for folder in folders:
-        if 'features.csv' in os.listdir(os.path.join(folder_name, folder)):
-            df_temp = pd.read_csv(os.path.join(folder_name, folder, 'features.csv'))
-            total_lines += len(df_temp)
-            df = pd.concat([df, df_temp], ignore_index=True)
+        try:
+            if 'features.csv' in os.listdir(os.path.join(folder_name, folder)):
+                df_temp = pd.read_csv(os.path.join(folder_name, folder, 'features.csv'))
+                total_lines += len(df_temp)
+                df = pd.concat([df, df_temp], ignore_index=True)
+        except NotADirectoryError:
+            pass
 
     assert total_lines == len(df)
     return df

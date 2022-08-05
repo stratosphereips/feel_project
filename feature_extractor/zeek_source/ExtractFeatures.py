@@ -134,12 +134,13 @@ class ExtractFeatures(object):
 
         try:
             with open(sub_folder + "/start_date.txt") as f:
-                started_unix_time = float(f.readlines()[1])
-                # print("     << Started unix time file was read in:", sub_folder)
+                started_unix_time = float(f.readlines()[0])
+                print("     << Started unix time file was read in:", sub_folder)
             f.close()
             self.reading_time_file.append(sub_folder)
         except IOError:
             # It means that this dataset has right time format.
+            print("Did not read time file from ", sub_folder)
             pass
 
         try:
@@ -261,7 +262,7 @@ class ExtractFeatures(object):
                 # Check Alexa 1000
                 dst_ip_and_src_ip = conn_split[2], conn_split[4]
                 server_name = ssl_split[9]
-                if 'Benign' in label or 'Background' in label:
+                if 'Benign' in label:
                     self.normal_ssl_aggregation += 1
                     for alexa_domain in self.alexa_1000_arr:
                         if alexa_domain in server_name or server_name in alexa_domain:
