@@ -10,9 +10,9 @@ sleep 3  # Sleep for 3s to give the server enough time to start
 # Ensure that the Keras dataset used in client.py is already cached.
 # python -c "import tensorflow as tf; tf.keras.datasets.cifar10.load_data()"
 
-for i in `seq 0 4`; do
+for i in `seq 1 10`; do
     echo "Starting client $i"
-    python client.py --partition=${i} &
+    python client.py --day=1 --client_id=${i}&
 done
 
 # This will allow you to use CTRL+C to stop all background processes

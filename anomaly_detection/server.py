@@ -1,10 +1,15 @@
+import warnings
+warnings.filterwarnings('ignore')
+
 from typing import Dict, Optional, Tuple, List
 from pathlib import Path
 
 import flwr as fl
 import tensorflow as tf
 import numpy as np
-from utils import get_data, get_model
+from utils import get_mal_data, get_ben_data, get_model, get_threshold
+import pandas as pd
+from sklearn import preprocessing
 
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
@@ -23,7 +28,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
     
     def aggregate_evaluate(
         self,
-        rnd: int,
+        server_round: int,
         results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]],
         failures: List[BaseException],
     ) -> Optional[float]:
@@ -34,20 +39,21 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         # No need to weigh using the number of examples because they are the same
         # but in general we may want to take this into account
         threshold = np.mean([r.metrics["threshold"]  for _, r in results])
-        anomalies = np.sum([r.metrics["anomalies"] for _, r in results])
-        print(f"Round {rnd} threshold averaged from client results: {threshold}")
-        print(f"Round {rnd} total number of anomalies from client results: {anomalies}")
+        anomalies_ben = np.sum([r.metrics["anomalies_ben"] for _, r in results])
+        print(f"Round {server_round} threshold averaged from client results: {threshold}")
+        print(f"Round {server_round} total number of anomalies from client results: {anomalies_ben}")
 
-        # Weigh loss of each client by number of examples used
-        losses = [r.loss * r.num_examples for _, r in results]
-        examples = [r.num_examples for _, r in results]
+        # The below is not needed because it is calculated like that in FedAvg
+        # # Weigh loss of each client by number of examples used
+        # losses = [r.loss * r.num_examples for _, r in results]
+        # examples = [r.num_examples for _, r in results]
 
-        # Aggregate and print custom metric
-        loss_aggregated = sum(losses) / sum(examples)
-        print(f"Round {rnd} weighted loss aggregated from client results: {loss_aggregated}")
+        # # Aggregate and print custom metric
+        # loss_aggregated = sum(losses) / sum(examples)
+        # print(f"Round {server_round} weighted loss aggregated from client results: {loss_aggregated}")
 
         # Call aggregate_evaluate from base class (FedAvg)
-        return super().aggregate_evaluate(rnd, results, failures)
+        return super().aggregate_evaluate(server_round, results, failures)
 
 def main() -> None:
     # Load and compile model for
@@ -60,20 +66,20 @@ def main() -> None:
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
         fraction_fit=1.0,
-        fraction_eval=1.0,
+        fraction_evaluate=1.0,
         min_fit_clients=3,
-        min_eval_clients=1,
+        min_evaluate_clients=1,
         min_available_clients=5,
-        eval_fn=get_eval_fn(model),
+        evaluate_fn=get_eval_fn(model),
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
-        initial_parameters=fl.common.weights_to_parameters(model.get_weights()),
+        initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),
     )
 
     # Start Flower server (SSL-enabled) for four rounds of federated learning
     fl.server.start_server(
         server_address="0.0.0.0:8080",
-        config={"num_rounds": 10},
+        config=fl.server.ServerConfig(num_rounds=10),
         strategy=strategy,
         certificates=(
             Path(".cache/certificates/ca.crt").read_bytes(),
@@ -87,32 +93,56 @@ def get_eval_fn(model):
     """Return an evaluation function for server-side evaluation."""
 
     # Load data and model here to avoid the overhead of doing it in `evaluate` itself
-    x_train, x_test = get_data()
+    X_train = pd.DataFrame()
+    X_test_ben = pd.DataFrame()
+    for client_id in range(1, 11):
+        train_temp, test_temp = get_ben_data(1, client_id)
+        X_train = pd.concat([X_train, train_temp], ignore_index=True)
+        X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
+
+    X_test_mal = get_mal_data()
+
+    # How are we scaling these parameters? A global scaler or the local aggregate?
+    scaler = preprocessing.MinMaxScaler().fit(X_train)
+    X_train = scaler.transform(X_train)
+    X_test_ben = scaler.transform(X_test_ben)
+
+    for folder in list(X_test_mal.keys()):
+        X_test_mal[folder] = scaler.transform(X_test_mal[folder])
 
     # The `evaluate` function will be called after every round
     def evaluate(
-        weights: fl.common.Weights,
+        server_round: int, 
+        parameters: fl.common.NDArrays, 
+        config: Dict[str, fl.common.Scalar]
     ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
-        model.set_weights(weights)  # Update model with the latest parameters
-        loss = model.evaluate(x_test, x_test)
+        model.set_weights(parameters)  # Update model with the latest parameters
+        loss = model.evaluate(X_test_ben, X_test_ben)
 
         # Ideally the threshold should be averaged over all the thresholds instead
         # but I don't know how to do that easily.
         # Instead look at the aggregate client results for the correct metrics.
-        x_train_pred = model.predict(x_train)
-        train_mae_loss = np.mean(np.abs(x_train_pred - x_train), axis=1)
-
-        # Get reconstruction loss threshold from training data.
-        threshold = np.max(train_mae_loss)
-
-        x_test_pred = model.predict(x_test)
-        test_mae_loss = np.mean(np.abs(x_test_pred - x_test), axis=1)
-        test_mae_loss = test_mae_loss.reshape((-1))
+        rec = model.predict(X_train)
+        mse = np.mean(np.power(X_train - rec, 2), axis=1)
+        threshold = get_threshold(X_train, mse)
 
         # Detect all the samples which are anomalies.
-        anomalies = test_mae_loss > threshold
+        rec_ben = model.predict(X_test_ben)
+        mse_ben = np.mean(np.power(X_test_ben - rec_ben, 2), axis=1)
 
-        return loss, {"threshold": threshold, "anomalies": np.sum(anomalies)}
+        rec_mal = dict()
+        mse_mal = dict()
+        for folder in list(X_test_mal.keys()):
+            rec_mal[folder] = model.predict(X_test_mal[folder])
+            mse_mal[folder] = np.mean(np.power(X_test_mal[folder] - rec_mal[folder], 2), axis=1)
+
+        # Detect all the samples which are anomalies.
+        anomalies_ben = sum(mse_ben > threshold)
+        anomalies_mal = []
+        for folder in list(X_test_mal.keys()):
+            anomalies_mal.append(sum(mse_mal[folder] > threshold))
+
+        return loss, {"threshold": threshold, "anomalies_ben": anomalies_ben, "anomalies_mal": anomalies_mal}
 
     return evaluate
 
