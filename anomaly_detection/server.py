@@ -63,8 +63,15 @@ def main() -> None:
     # Load and compile model for
     # 1. server-side parameter initialization
     # 2. server-side parameter evaluation
-    TIME_STEPS = 288
 
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Flower")
+    parser.add_argument("--day", type=int, choices=(range(1,6)), required=True)
+    args = parser.parse_args()
+    
+    day = args.day
+
+    # TODO: initialize the model parameters from the precious day
     model = get_model()
 
     # Create custom strategy that aggregates client metrics
@@ -74,7 +81,7 @@ def main() -> None:
         min_fit_clients=3,
         min_evaluate_clients=1,
         min_available_clients=5,
-        evaluate_fn=get_eval_fn(model),
+        evaluate_fn=get_eval_fn(model, day),
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
         initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),
@@ -93,14 +100,14 @@ def main() -> None:
     )
 
 
-def get_eval_fn(model):
+def get_eval_fn(model, day):
     """Return an evaluation function for server-side evaluation."""
 
     # Load data and model here to avoid the overhead of doing it in `evaluate` itself
     X_train = pd.DataFrame()
     X_test_ben = pd.DataFrame()
     for client_id in range(1, 11):
-        train_temp, test_temp = get_ben_data(1, client_id)
+        train_temp, test_temp = get_ben_data(day, client_id)
         X_train = pd.concat([X_train, train_temp], ignore_index=True)
         X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
 
