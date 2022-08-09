@@ -11,7 +11,7 @@ import numpy as np
 
 import flwr as fl
 from utils import get_ben_data, get_mal_data, get_model, get_threshold
-from sklearn import preprocessing
+# from sklearn import preprocessing
 # Make TensorFlow logs less verbose
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -20,30 +20,31 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 class ADClient(fl.client.NumPyClient):
     def __init__(self, model, X_train, X_test_ben, X_test_mal):
         self.model = model
-        # (self.X_train, self.X_min, self.X_max) = self.scale_data(X_train)
-        # self.X_test_ben = self.scale_transform(X_test_ben)
-        scaler = preprocessing.MinMaxScaler().fit(X_train)
-        self.X_train = scaler.transform(X_train)
-        self.X_test_ben = scaler.transform(X_test_ben)
+        (self.X_train, self.X_min, self.X_max) = self.scale_data(X_train)
+        self.X_test_ben = self.scale_transform(X_test_ben)
+        
+        # scaler = preprocessing.MinMaxScaler().fit(X_train)
+        # self.X_train = scaler.transform(X_train)
+        # self.X_test_ben = scaler.transform(X_test_ben)
 
         self.X_test_mal = dict()
-        for folder in list(X_test_mal.keys()):
-            self.X_test_mal[folder] = scaler.transform(X_test_mal[folder])
-
-        
         # for folder in list(X_test_mal.keys()):
-        #     self.X_test_mal[folder] = self.scale_transform(X_test_mal[folder])
+        #     self.X_test_mal[folder] = scaler.transform(X_test_mal[folder])
+       
+        for folder in list(X_test_mal.keys()):
+            self.X_test_mal[folder] = self.scale_transform(X_test_mal[folder])
 
     def scale_data(self, X):
         # Min max scaling"
-        X_min = np.min(X, axis=0)
-        X_max = np.max(X, axis=0)
-        X_std = (X - X_min) / (X_max - X_min)
+        X_min = np.min(X, axis=0).values
+        X_max = np.max(X, axis=0).values
+        # Numerical stability requires some small value in the denom.
+        X_std = (X - X_min) / (X_max - X_min + 0.000001)
         return (X_std, X_min, X_max)
 
     def scale_transform(self, X):
         # Transform the test data
-        X_std = (X - self.X_min) / (self.X_max - self.X_min)
+        X_std = (X - self.X_min) / (self.X_max - self.X_min + 0.000001)
         return X_std
 
     def get_properties(self, config):
@@ -121,7 +122,7 @@ class ADClient(fl.client.NumPyClient):
 
 
 def main() -> None:
-    # Parse command line argument `partition`
+    # Parse command line arguments
     parser = argparse.ArgumentParser(description="Flower")
     parser.add_argument("--client_id", type=int, choices=range(1, 11), required=True)
     parser.add_argument("--day", type=int, choices=(range(1,6)), required=True)

@@ -10,7 +10,7 @@ import numpy as np
 from utils import get_mal_data, get_ben_data, get_model, get_threshold
 import pandas as pd
 from sklearn import preprocessing
-
+import argparse
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
     def aggregate_fit(
@@ -78,7 +78,7 @@ def main() -> None:
     strategy = AggregateCustomMetricStrategy(
         fraction_fit=1.0,
         fraction_evaluate=1.0,
-        min_fit_clients=3,
+        min_fit_clients=5,
         min_evaluate_clients=1,
         min_available_clients=5,
         evaluate_fn=get_eval_fn(model, day),

@@ -93,8 +93,8 @@ def get_model():
 
 def get_ben_data(day: int, client_id: int):
     
-    df_ben = df_temp = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day), "comb_features_ben.csv"))
-    df_ben_test = df_temp = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day+1), "comb_features_ben.csv"))
+    df_ben = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day), "comb_features_ben.csv"))
+    df_ben_test = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day+1), "comb_features_ben.csv"))
 
     df_ben = df_ben.drop(["ssl_ratio"], axis=1)
     df_ben = df_ben.drop_duplicates()
@@ -116,8 +116,8 @@ def get_mal_data():
 
     for folder in mal_folders:
         mal_data[folder] = mal_data[folder].drop(["ssl_ratio"], axis=1)
-        mal_data[folder] = mal_data[folder].drop_duplicates()  
-         
+        mal_data[folder] = mal_data[folder].drop_duplicates() 
+
     return mal_data
 
 def get_threshold(X, mse):
