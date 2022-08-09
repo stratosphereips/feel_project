@@ -22,7 +22,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         aggregated_weights = super().aggregate_fit(server_round, results, failures)
         if aggregated_weights is not None and server_round == 10:
             # Save aggregated_weights on the final round
-            print(f"Saving round {server_round} aggregated_weights...")
+            print(f"[*] Saving round {server_round} aggregated_weights...")
             np.savez(f"round-{server_round}-weights.npz", *aggregated_weights)
                         
         return aggregated_weights
@@ -41,8 +41,8 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         # but in general we may want to take this into account
         threshold = np.mean([r.metrics["threshold"]  for _, r in results])
         anomalies_ben = np.sum([r.metrics["anomalies_ben"] for _, r in results])
-        print(f"Round {server_round} threshold averaged from client results: {threshold}")
-        print(f"Round {server_round} total number of anomalies from client results: {anomalies_ben}")
+        print(f"[*] Round {server_round} threshold averaged from client results: {threshold:.5f}")
+        print(f"[*] Round {server_round} total number of anomalies from client results: {anomalies_ben}")
 
         # The below is not needed because it is calculated like that in FedAvg
         # # Weigh loss of each client by number of examples used
@@ -53,7 +53,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         # loss_aggregated = sum(losses) / sum(examples)
         # print(f"Round {server_round} weighted loss aggregated from client results: {loss_aggregated}")
         if server_round == 10:
-            print(f"Saving round {server_round} average threshold ({threshold})")
+            print(f"[*] Saving round {server_round} average threshold...")
             np.savez(f"round-{server_round}-threshold.npz", threshold)
 
         # Call aggregate_evaluate from base class (FedAvg)
@@ -65,7 +65,7 @@ def main() -> None:
     # 2. server-side parameter evaluation
 
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Flower")
+    parser = argparse.ArgumentParser(description="Flower server")
     parser.add_argument("--day", type=int, choices=(range(1,6)), required=True)
     args = parser.parse_args()
     

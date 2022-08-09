@@ -152,7 +152,7 @@ def load_partition(day: int, client_id: int):
     X_test_mal = get_mal_data()
 
     # num_samples = x_train.shape[0] // 5
-    print(f"Num train samples for client{client_id}: {X_train.shape[0]}")
+    print(f"[+] Num train samples for client{client_id}: {X_train.shape[0]}")
     return X_train, X_test_ben, X_test_mal
     # return x_train[idx * num_samples : (idx + 1) * num_samples], x_test[idx * num_samples : (idx + 1) * num_samples]
 
