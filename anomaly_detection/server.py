@@ -13,6 +13,10 @@ from sklearn import preprocessing
 import argparse
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
+    def __init__(self, **kwds):
+        super().__init__(**kwds)
+        self.threshold = 1000
+
     def aggregate_fit(
         self,
         server_round: int,
@@ -24,6 +28,12 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
             # Save aggregated_weights on the final round
             print(f"[*] Saving round {server_round} aggregated_weights...")
             np.savez(f"round-{server_round}-weights.npz", *aggregated_weights)
+
+        self.threshold = np.mean([r.metrics["threshold"]  for _, r in results])
+        print(f"[*] Round {server_round} threshold averaged from client results: {self.threshold:.5f}")
+        # if server_round == 10:
+        print(f"[*] Saving round {server_round} average threshold...")
+        np.savez(f"round-{server_round}-threshold.npz", threshold=self.threshold)
                         
         return aggregated_weights
     
@@ -33,31 +43,17 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.EvaluateRes]],
         failures: List[BaseException],
     ) -> Optional[float]:
-        """Average thresholds and sum anomalies."""
+        """Sum anomalies reported from all clients."""
         if not results:
             return None
 
-        # No need to weigh using the number of examples because they are the same
-        # but in general we may want to take this into account
-        threshold = np.mean([r.metrics["threshold"]  for _, r in results])
         anomalies_ben = np.sum([r.metrics["anomalies_ben"] for _, r in results])
-        print(f"[*] Round {server_round} threshold averaged from client results: {threshold:.5f}")
         print(f"[*] Round {server_round} total number of anomalies from client results: {anomalies_ben}")
-
-        # The below is not needed because it is calculated like that in FedAvg
-        # # Weigh loss of each client by number of examples used
-        # losses = [r.loss * r.num_examples for _, r in results]
-        # examples = [r.num_examples for _, r in results]
-
-        # # Aggregate and print custom metric
-        # loss_aggregated = sum(losses) / sum(examples)
-        # print(f"Round {server_round} weighted loss aggregated from client results: {loss_aggregated}")
-        if server_round == 10:
-            print(f"[*] Saving round {server_round} average threshold...")
-            np.savez(f"round-{server_round}-threshold.npz", threshold)
 
         # Call aggregate_evaluate from base class (FedAvg)
         return super().aggregate_evaluate(server_round, results, failures)
+
+
 
 def main() -> None:
     # Load and compile model for
@@ -176,8 +172,18 @@ def evaluate_config(rnd: int):
     batches) during rounds one to three, then increase to ten local
     evaluation steps.
     """
-    val_steps = 5 if rnd < 4 else 10
-    return {"val_steps": val_steps}
+    with np.load(f'round-{rnd}-threshold.npz') as data:
+        threshold = data['threshold']
+
+    print("[*] Evaluate config with threshold:", threshold)
+
+    val_steps = 5 
+    # if rnd < 4 else 10
+    return {
+        "val_steps": val_steps,
+        "threshold": float(threshold)
+    }
+
 
 
 if __name__ == "__main__":

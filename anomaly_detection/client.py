@@ -11,7 +11,7 @@ import numpy as np
 
 import flwr as fl
 from utils import get_ben_data, get_mal_data, get_model, get_threshold
-# from sklearn import preprocessing
+from sklearn import preprocessing
 # Make TensorFlow logs less verbose
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -19,20 +19,21 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 # Define Flower client
 class ADClient(fl.client.NumPyClient):
     def __init__(self, model, X_train, X_test_ben, X_test_mal):
+        self.threshold = 100 # Or other high value
         self.model = model
-        (self.X_train, self.X_min, self.X_max) = self.scale_data(X_train)
-        self.X_test_ben = self.scale_transform(X_test_ben)
+        # (self.X_train, self.X_min, self.X_max) = self.scale_data(X_train)
+        # self.X_test_ben = self.scale_transform(X_test_ben)
         
-        # scaler = preprocessing.MinMaxScaler().fit(X_train)
-        # self.X_train = scaler.transform(X_train)
-        # self.X_test_ben = scaler.transform(X_test_ben)
+        scaler = preprocessing.MinMaxScaler().fit(X_train)
+        self.X_train = scaler.transform(X_train)
+        self.X_test_ben = scaler.transform(X_test_ben)
 
         self.X_test_mal = dict()
-        # for folder in list(X_test_mal.keys()):
-        #     self.X_test_mal[folder] = scaler.transform(X_test_mal[folder])
-       
         for folder in list(X_test_mal.keys()):
-            self.X_test_mal[folder] = self.scale_transform(X_test_mal[folder])
+            self.X_test_mal[folder] = scaler.transform(X_test_mal[folder])
+       
+        # for folder in list(X_test_mal.keys()):
+            # self.X_test_mal[folder] = self.scale_transform(X_test_mal[folder])
 
     def scale_data(self, X):
         # Min max scaling"
@@ -74,6 +75,11 @@ class ADClient(fl.client.NumPyClient):
             validation_split=0.1,
         )
 
+        # Calculate the threshold based on the local tarining data
+        rec = self.model.predict(self.X_train)
+        mse = np.mean(np.power(self.X_train - rec, 2), axis=1)
+        self.threshold = get_threshold(self.X_train, mse)
+
         # Return updated model parameters and results
         parameters_prime = self.model.get_weights()
         num_examples_train = len(self.X_train)
@@ -82,6 +88,7 @@ class ADClient(fl.client.NumPyClient):
             # "accuracy": history.history["accuracy"][0],
             "val_loss": history.history["val_loss"][0],
             # "val_accuracy": history.history["val_accuracy"][0],
+            "threshold": float(self.threshold)
         }
         return parameters_prime, num_examples_train, results
 
@@ -93,14 +100,11 @@ class ADClient(fl.client.NumPyClient):
 
         # Get config values
         steps: int = config["val_steps"]
-
-        # Calculate the threshold based on the local tarining data
-        rec = self.model.predict(self.X_train)
-        mse = np.mean(np.power(self.X_train - rec, 2), axis=1)
-        threshold = get_threshold(self.X_train, mse)
+        print("[+] Received global threshold:", config["threshold"])
+        self.threshold = config["threshold"]
 
         # Evaluate global model parameters on the local test data and return results
-        loss = self.model.evaluate(self.X_test_ben, self.X_test_ben, 32, steps=steps)
+        loss = self.model.evaluate(self.X_test_ben, self.X_test_ben, 32, steps=None)
         num_examples_test = len(self.X_test_ben)
 
         rec_ben = self.model.predict(self.X_test_ben)
@@ -113,12 +117,13 @@ class ADClient(fl.client.NumPyClient):
             mse_mal[folder] = np.mean(np.power(self.X_test_mal[folder] - rec_mal[folder], 2), axis=1)
 
         # Detect all the samples which are anomalies.
-        anomalies_ben = sum(mse_ben > threshold)
+        anomalies_ben = sum(mse_ben > self.threshold)
         anomalies_mal = 0
         for folder in list(self.X_test_mal.keys()):
-            anomalies_mal += sum(mse_mal[folder] > threshold)
+            anomalies_mal += sum(mse_mal[folder] > self.threshold)
 
-        return loss, num_examples_test, {"threshold": float(threshold), "anomalies_ben": int(anomalies_ben), "anomalies_mal": int(anomalies_mal)}
+        return loss, num_examples_test, {"anomalies_ben": int(anomalies_ben), 
+                                        "anomalies_mal": int(anomalies_mal)}
 
 
 def main() -> None:
