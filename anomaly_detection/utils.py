@@ -57,9 +57,24 @@ def get_mal_data():
     return mal_data
 
 def get_threshold(X, mse):
-    num = 0.02*len(X)
+    num = 0.01*len(X)
 
     th = 0.001
     while (sum(mse > th) > num):
         th += 0.001
     return th
+
+
+def mad_threshold(mse):
+    # return 3.5*np.median(np.abs(mse - np.median(mse)))
+    return 3.5*np.median(np.absolute(mse - np.median(mse)))
+
+
+def mad_score(points):
+    """https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm """
+    m = np.median(points)
+    ad = np.abs(points - m)
+    mad = np.median(ad)
+    
+    return 0.6745 * ad / mad
+

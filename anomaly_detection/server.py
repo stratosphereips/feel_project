@@ -86,7 +86,7 @@ def main() -> None:
     # Start Flower server (SSL-enabled) for four rounds of federated learning
     fl.server.start_server(
         server_address="0.0.0.0:8080",
-        config=fl.server.ServerConfig(num_rounds=10),
+        config=fl.server.ServerConfig(num_rounds=5),
         strategy=strategy,
         certificates=(
             Path(".cache/certificates/ca.crt").read_bytes(),
@@ -126,12 +126,12 @@ def get_eval_fn(model, day):
         model.set_weights(parameters)  # Update model with the latest parameters
         loss = model.evaluate(X_test_ben, X_test_ben)
 
-        # Ideally the threshold should be averaged over all the thresholds instead
-        # but I don't know how to do that easily.
-        # Instead look at the aggregate client results for the correct metrics.
-        rec = model.predict(X_train)
-        mse = np.mean(np.power(X_train - rec, 2), axis=1)
-        threshold = get_threshold(X_train, mse)
+        # Read the stored aggregated threshold from the clients
+        if server_round > 0:
+            with np.load(f'round-{server_round}-threshold.npz') as data:
+                threshold = float(data['threshold'])
+        else:
+            threshold = 100 # dummy value
 
         # Detect all the samples which are anomalies.
         rec_ben = model.predict(X_test_ben)
@@ -173,7 +173,7 @@ def evaluate_config(rnd: int):
     evaluation steps.
     """
     with np.load(f'round-{rnd}-threshold.npz') as data:
-        threshold = data['threshold']
+        threshold = float(data['threshold'])
 
     print("[*] Evaluate config with threshold:", threshold)
 
@@ -181,7 +181,7 @@ def evaluate_config(rnd: int):
     # if rnd < 4 else 10
     return {
         "val_steps": val_steps,
-        "threshold": float(threshold)
+        "threshold": threshold
     }
 
 

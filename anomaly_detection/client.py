@@ -10,8 +10,9 @@ import tensorflow as tf
 import numpy as np
 
 import flwr as fl
-from utils import get_ben_data, get_mal_data, get_model, get_threshold
+from utils import get_ben_data, get_mal_data, get_model, get_threshold, mad_threshold
 from sklearn import preprocessing
+from sklearn.model_selection import train_test_split
 # Make TensorFlow logs less verbose
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -66,19 +67,28 @@ class ADClient(fl.client.NumPyClient):
         batch_size: int = config["batch_size"]
         epochs: int = config["local_epochs"]
 
+        X_train, X_val = train_test_split(self.X_train, test_size=0.2, random_state=42)
+
         # Train the model using hyperparameters from config
         history = self.model.fit(
             self.X_train,
             self.X_train,
             batch_size,
             epochs,
-            validation_split=0.1,
+            validation_data=(X_val, X_val)
+            # validation_split=0.1,
         )
 
         # Calculate the threshold based on the local tarining data
-        rec = self.model.predict(self.X_train)
-        mse = np.mean(np.power(self.X_train - rec, 2), axis=1)
-        self.threshold = get_threshold(self.X_train, mse)
+        rec = self.model.predict(X_val)
+        mse = np.mean(np.power(X_val - rec, 2), axis=1)
+        self.threshold = get_threshold(X_val, mse)
+        # self.threshold = mad_threshold(mse)
+
+        # z_scores = mad_score(mse)
+        # outliers = z_scores > THRESHOLD
+
+        # print("[+] MAD threshold:", mad_threshold(mse))
 
         # Return updated model parameters and results
         parameters_prime = self.model.get_weights()
