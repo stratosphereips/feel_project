@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import tensorflow as tf
 import os
+import base64
 
 data_dir = '/opt/Malware-Project/BigDataset/FEELScenarios/'
 
@@ -65,16 +66,34 @@ def get_threshold(X, mse):
     return th
 
 
-def mad_threshold(mse):
-    # return 3.5*np.median(np.abs(mse - np.median(mse)))
-    return 3.5*np.median(np.absolute(mse - np.median(mse)))
+# def mad_threshold(mse):
+#     # return 3.5*np.median(np.abs(mse - np.median(mse)))
+#     return 3.5*np.median(np.absolute(mse - np.median(mse)))
 
 
-def mad_score(points):
-    """https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm """
-    m = np.median(points)
-    ad = np.abs(points - m)
-    mad = np.median(ad)
+# def mad_score(points):
+#     """https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm """
+#     m = np.median(points)
+#     ad = np.abs(points - m)
+#     mad = np.median(ad)
     
-    return 0.6745 * ad / mad
+#     return 0.6 * ad / mad
 
+def serialize_array(arr):
+    temp_str = ""
+    for element in arr:
+        temp_str += str(element)
+        temp_str += '|'
+
+    return base64.b64encode(bytes(temp_str, "utf-8"))
+
+
+def deserialize_string(b64_str: str):
+    arr = base64.b64decode(b64_str).decode("utf-8", "ignore")
+
+    return [float(element) for element in arr.split('|') if element != '']
+
+def scale_data(X, X_min, X_max):
+    X_std = (X - X_min) / (X_max - X_min)
+    X_std = np.nan_to_num(X_std, 1.0)
+    return X_std

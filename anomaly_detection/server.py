@@ -7,7 +7,7 @@ from pathlib import Path
 import flwr as fl
 import tensorflow as tf
 import numpy as np
-from utils import get_mal_data, get_ben_data, get_model, get_threshold
+from utils import get_mal_data, get_ben_data, get_model, get_threshold, serialize_array, deserialize_string, scale_data
 import pandas as pd
 from sklearn import preprocessing
 import argparse
@@ -34,7 +34,16 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         # if server_round == 10:
         print(f"[*] Saving round {server_round} average threshold...")
         np.savez(f"round-{server_round}-threshold.npz", threshold=self.threshold)
-                        
+
+        if server_round == 1:
+            X_min = np.min([deserialize_string(r.metrics["X_min"]) for _, r in results], axis=0)
+            print(f"[*] Saving round {server_round} minimums... {X_min}")
+            np.savez(f"round-{server_round}-min.npz", X_min=np.array(X_min))
+
+            X_max = np.max([deserialize_string(r.metrics["X_max"]) for _, r in results], axis=0)
+            print(f"[*] Saving round {server_round} maximums... {X_max}")
+            np.savez(f"round-{server_round}-max.npz", X_max=np.array(X_max))
+
         return aggregated_weights
     
     def aggregate_evaluate(
@@ -100,22 +109,22 @@ def get_eval_fn(model, day):
     """Return an evaluation function for server-side evaluation."""
 
     # Load data and model here to avoid the overhead of doing it in `evaluate` itself
-    X_train = pd.DataFrame()
+    # X_train = pd.DataFrame()
     X_test_ben = pd.DataFrame()
     for client_id in range(1, 11):
-        train_temp, test_temp = get_ben_data(day, client_id)
-        X_train = pd.concat([X_train, train_temp], ignore_index=True)
+        _, test_temp = get_ben_data(day, client_id)
+        # X_train = pd.concat([X_train, train_temp], ignore_index=True)
         X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
 
     X_test_mal = get_mal_data()
 
     # How are we scaling these parameters? A global scaler or the local aggregate?
-    scaler = preprocessing.MinMaxScaler().fit(X_train)
-    X_train = scaler.transform(X_train)
-    X_test_ben = scaler.transform(X_test_ben)
+    # scaler = preprocessing.MinMaxScaler().fit(X_train)
+    # X_train = scaler.transform(X_train)
+    # X_test_ben = scaler.transform(X_test_ben)
 
-    for folder in list(X_test_mal.keys()):
-        X_test_mal[folder] = scaler.transform(X_test_mal[folder])
+    # for folder in list(X_test_mal.keys()):
+    #     X_test_mal[folder] = scaler.transform(X_test_mal[folder])
 
     # The `evaluate` function will be called after every round
     def evaluate(
@@ -133,9 +142,22 @@ def get_eval_fn(model, day):
         else:
             threshold = 100 # dummy value
 
+        # Read the stored per-feature maximums and minimums
+        if server_round > 0:
+            with np.load(f'round-1-max.npz') as data:
+                X_max = data['X_max']
+
+            with np.load(f'round-1-min.npz') as data:
+                X_min = data['X_min']
+        else:
+            X_max = 1000*np.ones(40)
+            X_min = -1000*np.zeros(40)
+        
+        X_test_ben_ = scale_data(X_test_ben, X_min, X_max)
+
         # Detect all the samples which are anomalies.
-        rec_ben = model.predict(X_test_ben)
-        mse_ben = np.mean(np.power(X_test_ben - rec_ben, 2), axis=1)
+        rec_ben = model.predict(X_test_ben_)
+        mse_ben = np.mean(np.power(X_test_ben_ - rec_ben, 2), axis=1)
 
         rec_mal = dict()
         mse_mal = dict()
@@ -152,7 +174,6 @@ def get_eval_fn(model, day):
         return loss, {"threshold": threshold, "anomalies_ben": anomalies_ben, "anomalies_mal": anomalies_mal}
 
     return evaluate
-
 
 def fit_config(rnd: int):
     """Return training configuration dict for each round.
@@ -177,11 +198,23 @@ def evaluate_config(rnd: int):
 
     print("[*] Evaluate config with threshold:", threshold)
 
+    # if rnd == 1:
+    with np.load(f'round-1-max.npz') as data:
+        X_max = serialize_array(data['X_max'])
+
+    with np.load(f'round-1-min.npz') as data:
+        X_min = serialize_array(data['X_min'])
+    
+
+    print("[*] Evaluate config with threshold:", threshold)
+
     val_steps = 5 
     # if rnd < 4 else 10
     return {
         "val_steps": val_steps,
-        "threshold": threshold
+        "threshold": threshold,
+        "X_min": X_min,
+        "X_max": X_max
     }
 
 

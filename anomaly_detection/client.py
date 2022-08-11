@@ -10,7 +10,7 @@ import tensorflow as tf
 import numpy as np
 
 import flwr as fl
-from utils import get_ben_data, get_mal_data, get_model, get_threshold, mad_threshold
+from utils import get_ben_data, get_mal_data, get_model, get_threshold,serialize_array, deserialize_string, scale_data
 from sklearn import preprocessing
 from sklearn.model_selection import train_test_split
 # Make TensorFlow logs less verbose
@@ -22,32 +22,15 @@ class ADClient(fl.client.NumPyClient):
     def __init__(self, model, X_train, X_test_ben, X_test_mal):
         self.threshold = 100 # Or other high value
         self.model = model
-        # (self.X_train, self.X_min, self.X_max) = self.scale_data(X_train)
-        # self.X_test_ben = self.scale_transform(X_test_ben)
+        # self.scaler = preprocessing.MinMaxScaler().fit(X_train) 
         
-        scaler = preprocessing.MinMaxScaler().fit(X_train)
-        self.X_train = scaler.transform(X_train)
-        self.X_test_ben = scaler.transform(X_test_ben)
+        # Store the data unscaled
+        self.X_train = X_train
+        self.X_test_ben = X_test_ben
+        self.X_test_mal = X_test_mal
 
-        self.X_test_mal = dict()
-        for folder in list(X_test_mal.keys()):
-            self.X_test_mal[folder] = scaler.transform(X_test_mal[folder])
-       
-        # for folder in list(X_test_mal.keys()):
-            # self.X_test_mal[folder] = self.scale_transform(X_test_mal[folder])
-
-    def scale_data(self, X):
-        # Min max scaling"
-        X_min = np.min(X, axis=0).values
-        X_max = np.max(X, axis=0).values
-        # Numerical stability requires some small value in the denom.
-        X_std = (X - X_min) / (X_max - X_min + 0.000001)
-        return (X_std, X_min, X_max)
-
-    def scale_transform(self, X):
-        # Transform the test data
-        X_std = (X - self.X_min) / (self.X_max - self.X_min + 0.000001)
-        return X_std
+        self.X_min = np.min(X_train, axis=0).values
+        self.X_max = np.max(X_train, axis=0).values
 
     def get_properties(self, config):
         """Get properties of client."""
@@ -67,38 +50,34 @@ class ADClient(fl.client.NumPyClient):
         batch_size: int = config["batch_size"]
         epochs: int = config["local_epochs"]
 
-        X_train, X_val = train_test_split(self.X_train, test_size=0.2, random_state=42)
+        X_train = scale_data(self.X_train, self.X_min, self.X_max)
+        X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=42)
 
         # Train the model using hyperparameters from config
         history = self.model.fit(
-            self.X_train,
-            self.X_train,
+            X_train,
+            X_train,
             batch_size,
             epochs,
             validation_data=(X_val, X_val)
-            # validation_split=0.1,
         )
 
         # Calculate the threshold based on the local tarining data
         rec = self.model.predict(X_val)
         mse = np.mean(np.power(X_val - rec, 2), axis=1)
         self.threshold = get_threshold(X_val, mse)
-        # self.threshold = mad_threshold(mse)
-
-        # z_scores = mad_score(mse)
-        # outliers = z_scores > THRESHOLD
-
-        # print("[+] MAD threshold:", mad_threshold(mse))
 
         # Return updated model parameters and results
         parameters_prime = self.model.get_weights()
-        num_examples_train = len(self.X_train)
+        num_examples_train = len(X_train)
         results = {
             "loss": history.history["loss"][0],
             # "accuracy": history.history["accuracy"][0],
             "val_loss": history.history["val_loss"][0],
             # "val_accuracy": history.history["val_accuracy"][0],
-            "threshold": float(self.threshold)
+            "threshold": float(self.threshold),
+            "X_min": serialize_array(self.X_min),
+            "X_max": serialize_array(self.X_max)
         }
         return parameters_prime, num_examples_train, results
 
@@ -113,24 +92,42 @@ class ADClient(fl.client.NumPyClient):
         print("[+] Received global threshold:", config["threshold"])
         self.threshold = config["threshold"]
 
-        # Evaluate global model parameters on the local test data and return results
-        loss = self.model.evaluate(self.X_test_ben, self.X_test_ben, 32, steps=None)
-        num_examples_test = len(self.X_test_ben)
+        self.X_min = np.array(deserialize_string(config["X_min"]))
+        print("[+] Received global minimums")
 
-        rec_ben = self.model.predict(self.X_test_ben)
-        mse_ben = np.mean(np.power(self.X_test_ben - rec_ben, 2), axis=1)
+        self.X_max = np.array(deserialize_string(config["X_max"]))
+        print("[+] Received global maximums")
+
+        X_test_ben_ = scale_data(self.X_test_ben, self.X_min, self.X_max)
+
+        # Evaluate global model parameters on the local test data and return results
+        loss = self.model.evaluate(X_test_ben_, X_test_ben_, 32, steps=None)
+        num_examples_test = len(X_test_ben_)
+
+        rec_ben = self.model.predict(X_test_ben_)
+        mse_ben = np.mean(np.power(X_test_ben_ - rec_ben, 2), axis=1)
 
         rec_mal = dict()
         mse_mal = dict()
         for folder in list(self.X_test_mal.keys()):
-            rec_mal[folder] = self.model.predict(self.X_test_mal[folder])
-            mse_mal[folder] = np.mean(np.power(self.X_test_mal[folder] - rec_mal[folder], 2), axis=1)
+            X_test_mal_ = scale_data(self.X_test_mal[folder], self.X_min, self.X_max)
+            rec_mal[folder] = self.model.predict(X_test_mal_)
+            mse_mal[folder] = np.mean(np.power(X_test_mal_ - rec_mal[folder], 2), axis=1)
 
         # Detect all the samples which are anomalies.
         anomalies_ben = sum(mse_ben > self.threshold)
         anomalies_mal = 0
         for folder in list(self.X_test_mal.keys()):
             anomalies_mal += sum(mse_mal[folder] > self.threshold)
+
+        # Testing MAD scores
+        # print("[*] Sum of anomalous ben points based on MAD:", sum(mad_score(mse_ben) > 3.5))
+
+        # anomalies_mal_mad = 0
+        # for folder in list(self.X_test_mal.keys()):
+        #     anomalies_mal_mad += sum(mad_score(mse_mal[folder]) > 3.5)
+
+        # print("[*] Sum of anomalous mal points based on MAD:", anomalies_mal_mad)    
 
         return loss, num_examples_test, {"anomalies_ben": int(anomalies_ben), 
                                         "anomalies_mal": int(anomalies_mal)}
