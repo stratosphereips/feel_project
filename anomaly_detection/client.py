@@ -51,7 +51,7 @@ class ADClient(fl.client.NumPyClient):
         epochs: int = config["local_epochs"]
 
         X_train = scale_data(self.X_train, self.X_min, self.X_max)
-        X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=42)
+        X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=8181)
 
         # Train the model using hyperparameters from config
         history = self.model.fit(
@@ -62,6 +62,13 @@ class ADClient(fl.client.NumPyClient):
             validation_data=(X_val, X_val)
         )
 
+        loss = history.history["loss"][0]
+        val_loss = history.history["val_loss"][0]
+
+        if np.isnan(loss) or np.isnan(val_loss):
+            exit()
+            # return None,  0, {}
+
         # Calculate the threshold based on the local tarining data
         rec = self.model.predict(X_val)
         mse = np.mean(np.power(X_val - rec, 2), axis=1)
@@ -71,9 +78,9 @@ class ADClient(fl.client.NumPyClient):
         parameters_prime = self.model.get_weights()
         num_examples_train = len(X_train)
         results = {
-            "loss": history.history["loss"][0],
+            "loss": loss,
             # "accuracy": history.history["accuracy"][0],
-            "val_loss": history.history["val_loss"][0],
+            "val_loss": val_loss,
             # "val_accuracy": history.history["val_accuracy"][0],
             "threshold": float(self.threshold),
             "X_min": serialize_array(self.X_min),
@@ -127,10 +134,32 @@ class ADClient(fl.client.NumPyClient):
         # for folder in list(self.X_test_mal.keys()):
         #     anomalies_mal_mad += sum(mad_score(mse_mal[folder]) > 3.5)
 
-        # print("[*] Sum of anomalous mal points based on MAD:", anomalies_mal_mad)    
+        # print("[*] Sum of anomalous mal points based on MAD:", anomalies_mal_mad)  
 
-        return loss, num_examples_test, {"anomalies_ben": int(anomalies_ben), 
-                                        "anomalies_mal": int(anomalies_mal)}
+        num_malware = 0
+        for folder in list(self.X_test_mal.keys()):
+            num_malware += self.X_test_mal[folder].shape[0]  
+
+        # accuracy = ((num_examples_test - anomalies_ben) + anomalies_mal) / (num_examples_test + num_malware)
+        # tpr = anomalies_mal / num_malware
+        # fpr = anomalies_ben / (num_examples_test + num_malware)
+
+        fp = int(anomalies_ben)
+        tp = int(anomalies_mal)
+        tn = num_examples_test - fp
+        fn = num_malware - tp
+
+        accuracy = (tp + tn) / (num_examples_test + num_malware)
+        tpr = tp / num_malware
+        fpr = fp / num_examples_test
+
+        return loss, int(num_examples_test+num_malware), {
+                            "anomalies_ben": int(anomalies_ben), 
+                            "anomalies_mal": int(anomalies_mal),
+                            "accuracy": accuracy,
+                            "tpr": tpr,
+                            "fpr": fpr
+                            }
 
 
 def main() -> None:

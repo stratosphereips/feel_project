@@ -58,7 +58,7 @@ def get_mal_data():
     return mal_data
 
 def get_threshold(X, mse):
-    num = 0.01*len(X)
+    num = 0.015*len(X)
 
     th = 0.001
     while (sum(mse > th) > num):

@@ -56,8 +56,38 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         if not results:
             return None
 
-        anomalies_ben = np.sum([r.metrics["anomalies_ben"] for _, r in results])
-        print(f"[*] Round {server_round} total number of anomalies from client results: {anomalies_ben}")
+        anomalies_ben = np.sum([r.metrics["anomalies_ben"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} total number of ben. anomalies from client results: {int(anomalies_ben)}")
+
+        anomalies_mal = np.mean([np.sum(r.metrics["anomalies_mal"]) for _, r in results if r != None])
+        print(f"[*] Round {server_round} total number of mal. anomalies from client results: {int(anomalies_mal)}")
+
+        # Weigh accuracy of each client by number of examples used
+        accuracies = [r.metrics["accuracy"] * r.num_examples for _, r in results if r != None]
+        examples = [r.num_examples for _, r in results if r != None]
+
+        # Aggregate and print custom metric
+        accuracy_aggregated = 100*sum(accuracies) / sum(examples)
+        print(f"[*] Round {server_round} accuracy weighted avg from client results: {accuracy_aggregated:.2f}%")
+
+        accuracies = np.mean([r.metrics["accuracy"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} accuracy avg from client results: {100*accuracies:.2f}%")
+
+        # Weigh TPR of each client by number of examples used
+        tprs = [r.metrics["tpr"] * r.num_examples for _, r in results if r != None]
+        # Aggregate and print custom metric
+        tpr_aggregated = 100*sum(tprs) / sum(examples)
+        print(f"[*] Round {server_round} TPR weighted avg from client results: {tpr_aggregated:.2f}%")
+        tprs = np.mean([r.metrics["tpr"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} TPR avg from client results: {100*tprs:.2f}%")
+
+        # Weigh FPR of each client by number of examples used
+        fprs = [r.metrics["fpr"] * r.num_examples for _, r in results if r != None]
+        # Aggregate and print custom metric
+        fpr_aggregated = 100*sum(fprs) / sum(examples)
+        print(f"[*] Round {server_round} FPR weighted avg from client results: {fpr_aggregated:.2f}%")
+        fprs = np.mean([r.metrics["fpr"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} FPR avg from client results: {100*fprs:.2f}%")
 
         # Call aggregate_evaluate from base class (FedAvg)
         return super().aggregate_evaluate(server_round, results, failures)
@@ -171,7 +201,31 @@ def get_eval_fn(model, day):
         for folder in list(X_test_mal.keys()):
             anomalies_mal.append(sum(mse_mal[folder] > threshold))
 
-        return loss, {"threshold": threshold, "anomalies_ben": anomalies_ben, "anomalies_mal": anomalies_mal}
+        num_malware = 0
+        for folder in list(X_test_mal.keys()):
+            num_malware += X_test_mal[folder].shape[0]
+
+        fp = anomalies_ben
+        tp = sum(anomalies_mal)
+        tn = X_test_ben_.shape[0] - fp
+        fn = num_malware - tp
+
+        accuracy = (tp + tn) / (tp + tn + fp + fn)
+        # tpr = tp / (tp + fn)
+        # fpr = fp / (fp + tn)
+
+        tpr = tp / num_malware
+        fpr = fp / X_test_ben_ .shape[0]
+
+
+        return loss, {
+                "threshold": threshold, 
+                "anomalies_ben": anomalies_ben, 
+                "anomalies_mal": anomalies_mal, 
+                "accuracy": accuracy,
+                "tpr": tpr,
+                "fpr": fpr
+                }
 
     return evaluate
 
