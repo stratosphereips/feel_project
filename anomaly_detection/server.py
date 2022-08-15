@@ -106,7 +106,7 @@ def main() -> None:
     
     day = args.day
 
-    # TODO: initialize the model parameters from the precious day
+    # TODO: initialize the model parameters from the previous day
     model = get_model()
 
     # Create custom strategy that aggregates client metrics
@@ -114,7 +114,7 @@ def main() -> None:
         fraction_fit=1.0,
         fraction_evaluate=1.0,
         min_fit_clients=5,
-        min_evaluate_clients=1,
+        min_evaluate_clients=5,
         min_available_clients=5,
         evaluate_fn=get_eval_fn(model, day),
         on_fit_config_fn=fit_config,
@@ -180,8 +180,8 @@ def get_eval_fn(model, day):
             with np.load(f'round-1-min.npz') as data:
                 X_min = data['X_min']
         else:
-            X_max = 1000*np.ones(40)
-            X_min = -1000*np.zeros(40)
+            X_max = 10*np.ones(37)
+            X_min = -10*np.ones(37)
         
         X_test_ben_ = scale_data(X_test_ben, X_min, X_max)
 
@@ -192,8 +192,9 @@ def get_eval_fn(model, day):
         rec_mal = dict()
         mse_mal = dict()
         for folder in list(X_test_mal.keys()):
-            rec_mal[folder] = model.predict(X_test_mal[folder])
-            mse_mal[folder] = np.mean(np.power(X_test_mal[folder] - rec_mal[folder], 2), axis=1)
+            X_test_mal_ = scale_data(X_test_mal[folder], X_min, X_max)
+            rec_mal[folder] = model.predict(X_test_mal_)
+            mse_mal[folder] = np.mean(np.power(X_test_mal_ - rec_mal[folder], 2), axis=1)
 
         # Detect all the samples which are anomalies.
         anomalies_ben = sum(mse_ben > threshold)
@@ -235,7 +236,7 @@ def fit_config(rnd: int):
     local epoch, increase to two local epochs afterwards.
     """
     config = {
-        "batch_size": 32,
+        "batch_size": 128,
         "local_epochs": 1 if rnd < 2 else 2,
     }
     return config
@@ -262,7 +263,7 @@ def evaluate_config(rnd: int):
 
     print("[*] Evaluate config with threshold:", threshold)
 
-    val_steps = 5 
+    val_steps = 10 
     # if rnd < 4 else 10
     return {
         "val_steps": val_steps,

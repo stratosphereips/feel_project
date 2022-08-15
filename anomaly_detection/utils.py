@@ -10,18 +10,18 @@ data_dir = '/opt/Malware-Project/BigDataset/FEELScenarios/'
 def get_model():
     model = tf.keras.Sequential(
         [
-        tf.keras.layers.Input(shape=(40)),
-        tf.keras.layers.Dense(36, activation='elu'),
-        tf.keras.layers.Dropout(0.3),
+        tf.keras.layers.Input(shape=(37)),
+        tf.keras.layers.Dense(32, activation='elu'),
+        tf.keras.layers.Dropout(0.1),
         tf.keras.layers.Dense(20, activation='elu'),
-        tf.keras.layers.Dropout(0.3),
+        tf.keras.layers.Dropout(0.1),
         tf.keras.layers.Dense(10, activation='elu'),
-        tf.keras.layers.Dropout(0.3),
+        tf.keras.layers.Dropout(0.1),
         tf.keras.layers.Dense(20, activation='elu'),
-        tf.keras.layers.Dropout(0.3),
-        tf.keras.layers.Dense(36, activation='elu'),
-        tf.keras.layers.Dropout(0.3),
-        tf.keras.layers.Dense(40, activation='elu')
+        tf.keras.layers.Dropout(0.1),
+        tf.keras.layers.Dense(32, activation='elu'),
+        tf.keras.layers.Dropout(0.1),
+        tf.keras.layers.Dense(37, activation='elu')
         ]
     )
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss="mse")
@@ -33,10 +33,10 @@ def get_ben_data(day: int, client_id: int):
     df_ben = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day), "comb_features_ben.csv"))
     df_ben_test = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day+1), "comb_features_ben.csv"))
 
-    df_ben = df_ben.drop(["ssl_ratio"], axis=1)
+    df_ben = df_ben.drop(["ssl_ratio", "self_signed_ratio", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
     df_ben = df_ben.drop_duplicates()
 
-    df_ben_test = df_ben_test.drop(["ssl_ratio"], axis=1)
+    df_ben_test = df_ben_test.drop(["ssl_ratio", "self_signed_ratio", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
     df_ben_test = df_ben_test.drop_duplicates()
 
     return df_ben, df_ben_test
@@ -52,15 +52,15 @@ def get_mal_data():
         mal_data[folder] = pd.concat([mal_data[folder], df_temp], ignore_index=True)
 
     for folder in mal_folders:
-        mal_data[folder] = mal_data[folder].drop(["ssl_ratio"], axis=1)
+        mal_data[folder] = mal_data[folder].drop(["ssl_ratio", "self_signed_ratio", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
         mal_data[folder] = mal_data[folder].drop_duplicates() 
 
     return mal_data
 
 def get_threshold(X, mse):
-    num = 0.015*len(X)
+    num = 0.02*len(X)
 
-    th = 0.001
+    th = 0.0001
     while (sum(mse > th) > num):
         th += 0.001
     return th
@@ -94,6 +94,6 @@ def deserialize_string(b64_str: str):
     return [float(element) for element in arr.split('|') if element != '']
 
 def scale_data(X, X_min, X_max):
-    X_std = (X - X_min) / (X_max - X_min)
+    X_std = (X - X_min) / (X_max - X_min + 1e-5)
     X_std = np.nan_to_num(X_std, 1.0)
     return X_std

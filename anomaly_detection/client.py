@@ -53,6 +53,7 @@ class ADClient(fl.client.NumPyClient):
         X_train = scale_data(self.X_train, self.X_min, self.X_max)
         X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=8181)
 
+
         # Train the model using hyperparameters from config
         history = self.model.fit(
             X_train,
@@ -66,8 +67,17 @@ class ADClient(fl.client.NumPyClient):
         val_loss = history.history["val_loss"][0]
 
         if np.isnan(loss) or np.isnan(val_loss):
-            exit()
-            # return None,  0, {}
+            print("[+] HERE!", np.isnan(loss), np.isnan(val_loss))
+            print("[+] HERE!", history.history['loss'])
+            # exit()
+            # Return the previous parameters if the loss exploded
+            return parameters,  0, {
+                        "loss": loss,
+                        "val_loss": val_loss,
+                        "threshold": float(self.threshold),
+                        "X_min": serialize_array(self.X_min),
+                        "X_max": serialize_array(self.X_max)
+                        }
 
         # Calculate the threshold based on the local tarining data
         rec = self.model.predict(X_val)
@@ -108,7 +118,7 @@ class ADClient(fl.client.NumPyClient):
         X_test_ben_ = scale_data(self.X_test_ben, self.X_min, self.X_max)
 
         # Evaluate global model parameters on the local test data and return results
-        loss = self.model.evaluate(X_test_ben_, X_test_ben_, 32, steps=None)
+        loss = self.model.evaluate(X_test_ben_, X_test_ben_, 64, steps=None)
         num_examples_test = len(X_test_ben_)
 
         rec_ben = self.model.predict(X_test_ben_)
@@ -153,6 +163,7 @@ class ADClient(fl.client.NumPyClient):
         tpr = tp / num_malware
         fpr = fp / num_examples_test
 
+
         return loss, int(num_examples_test+num_malware), {
                             "anomalies_ben": int(anomalies_ben), 
                             "anomalies_mal": int(anomalies_mal),
@@ -194,6 +205,7 @@ def load_partition(day: int, client_id: int):
 
     # num_samples = x_train.shape[0] // 5
     print(f"[+] Num train samples for client{client_id}: {X_train.shape[0]}")
+    print(f"[+] Num of features for client{client_id}: {X_train.shape[1]}")
     return X_train, X_test_ben, X_test_mal
     # return x_train[idx * num_samples : (idx + 1) * num_samples], x_test[idx * num_samples : (idx + 1) * num_samples]
 
