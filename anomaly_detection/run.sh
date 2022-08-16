@@ -1,6 +1,7 @@
 #!/bin/bash
 
-day=1
+day=$1
+seed=$2
 
 ./certificates/generate.sh
 
@@ -12,7 +13,7 @@ sleep 3  # Sleep for 3s to give the server enough time to start
 
 for i in `seq 1 10`; do
     echo "Starting client $i"
-    python client.py --day=${day} --client_id=${i}&
+    python client.py --day=${day} --client_id=${i} --seed=${seed}&
 done
 
 # This will allow you to use CTRL+C to stop all background processes
