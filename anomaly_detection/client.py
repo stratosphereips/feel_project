@@ -19,7 +19,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 # Define Flower client
 class ADClient(fl.client.NumPyClient):
-    def __init__(self, model, X_train, X_test_ben, X_test_mal):
+    def __init__(self, model, X_train, X_test_ben, X_test_mal, seed):
         self.threshold = 100 # Or other high value
         self.model = model
         # self.scaler = preprocessing.MinMaxScaler().fit(X_train) 
@@ -31,6 +31,8 @@ class ADClient(fl.client.NumPyClient):
 
         self.X_min = np.min(X_train, axis=0).values
         self.X_max = np.max(X_train, axis=0).values
+
+        self.seed=seed
 
     def get_properties(self, config):
         """Get properties of client."""
@@ -51,7 +53,7 @@ class ADClient(fl.client.NumPyClient):
         epochs: int = config["local_epochs"]
 
         X_train = scale_data(self.X_train, self.X_min, self.X_max)
-        X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=8181)
+        X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=self.seed)
 
 
         # Train the model using hyperparameters from config
@@ -178,6 +180,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Flower")
     parser.add_argument("--client_id", type=int, choices=range(1, 11), required=True)
     parser.add_argument("--day", type=int, choices=(range(1,6)), required=True)
+    parser.add_argument("--seed", type=int, required=False, default=8181)
     args = parser.parse_args()
 
     # Load and compile Keras model
@@ -186,7 +189,7 @@ def main() -> None:
     X_train, X_test_ben, X_test_mal = load_partition(args. day, args.client_id)
 
     # Start Flower client
-    client = ADClient(model, X_train, X_test_ben, X_test_mal)
+    client = ADClient(model, X_train, X_test_ben, X_test_mal, args.seed)
 
     fl.client.start_numpy_client(
         server_address="localhost:8080",

@@ -125,7 +125,7 @@ def main() -> None:
     # Start Flower server (SSL-enabled) for four rounds of federated learning
     fl.server.start_server(
         server_address="0.0.0.0:8080",
-        config=fl.server.ServerConfig(num_rounds=5),
+        config=fl.server.ServerConfig(num_rounds=9),
         strategy=strategy,
         certificates=(
             Path(".cache/certificates/ca.crt").read_bytes(),
@@ -180,8 +180,8 @@ def get_eval_fn(model, day):
             with np.load(f'round-1-min.npz') as data:
                 X_min = data['X_min']
         else:
-            X_max = 10*np.ones(37)
-            X_min = -10*np.ones(37)
+            X_max = 10*np.ones(36)
+            X_min = -10*np.ones(36)
         
         X_test_ben_ = scale_data(X_test_ben, X_min, X_max)
 
@@ -236,7 +236,7 @@ def fit_config(rnd: int):
     local epoch, increase to two local epochs afterwards.
     """
     config = {
-        "batch_size": 128,
+        "batch_size": 64,
         "local_epochs": 1 if rnd < 2 else 2,
     }
     return config
