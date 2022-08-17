@@ -11,6 +11,7 @@ from utils import get_mal_data, get_ben_data, get_model, get_threshold, serializ
 import pandas as pd
 from sklearn import preprocessing
 import argparse
+import os
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
     def __init__(self, **kwds):
@@ -24,10 +25,10 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         failures: List[BaseException],
     ) -> Optional[fl.common.Parameters]:
         aggregated_weights = super().aggregate_fit(server_round, results, failures)
-        if aggregated_weights is not None and server_round == 10:
+        if aggregated_weights is not None and server_round == 9:
             # Save aggregated_weights on the final round
             print(f"[*] Saving round {server_round} aggregated_weights...")
-            np.savez(f"round-{server_round}-weights.npz", *aggregated_weights)
+            np.savez(f"model-weights.npz", *aggregated_weights)
 
         self.threshold = np.mean([r.metrics["threshold"]  for _, r in results])
         print(f"[*] Round {server_round} threshold averaged from client results: {self.threshold:.5f}")
@@ -101,13 +102,20 @@ def main() -> None:
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Flower server")
-    parser.add_argument("--day", type=int, choices=(range(1,6)), required=True)
+    parser.add_argument("--day", type=int, choices=(range(1,6)), required=True, help="Training day")
+    parser.add_argument("--seed", type=int, required=False, default=8181, help="Random seed")
+    parser.add_argument("--load", type=int, choices=(0,1), required=False, default=0, help="Load a model from disk or not")
+
     args = parser.parse_args()
     
     day = args.day
 
-    # TODO: initialize the model parameters from the previous day
-    model = get_model()
+    if args.load and day > 1 and os.path.exists(f'day{day-1}_{args.seed}_model.h5'):
+        model = tf.keras.models.load_model(f'day{day-1}_{args.seed}_model.h5')
+        num_rounds = 2
+    else:
+        model = get_model()
+        num_rounds=9
 
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
@@ -125,7 +133,7 @@ def main() -> None:
     # Start Flower server (SSL-enabled) for four rounds of federated learning
     fl.server.start_server(
         server_address="0.0.0.0:8080",
-        config=fl.server.ServerConfig(num_rounds=9),
+        config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
         certificates=(
             Path(".cache/certificates/ca.crt").read_bytes(),
@@ -133,6 +141,8 @@ def main() -> None:
             Path(".cache/certificates/server.key").read_bytes(),
         ),
     )
+
+    model.save(f'day{day}_{args.seed}_model.h5')
 
 
 def get_eval_fn(model, day):

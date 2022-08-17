@@ -8,7 +8,7 @@ seed=$2
 rm *.npz
 
 echo "Starting server"
-python server.py --day=${day}&
+python server.py --day=${day} --seed=${seed} --load=1&
 sleep 3  # Sleep for 3s to give the server enough time to start
 
 for i in `seq 1 10`; do
