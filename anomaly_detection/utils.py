@@ -4,8 +4,6 @@ import tensorflow as tf
 import os
 import base64
 
-data_dir = '/opt/Malware-Project/BigDataset/FEELScenarios/'
-
 
 def get_model():
     model = tf.keras.Sequential(
@@ -28,7 +26,7 @@ def get_model():
     return model
 
 
-def get_ben_data(day: int, client_id: int):
+def get_ben_data(day: int, client_id: int, data_dir):
     
     df_ben = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day), "comb_features_ben.csv"))
     df_ben_test = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day+1), "comb_features_ben.csv"))
@@ -46,7 +44,7 @@ def get_ben_data(day: int, client_id: int):
     return df_ben, df_ben_test
 
 
-def get_mal_data():
+def get_mal_data(data_dir):
     mal_data = dict()
     mal_folders = ['CTU-Malware-Capture-Botnet-346-1', 'CTU-Malware-Capture-Botnet-327-2', 'CTU-Malware-Capture-Botnet-230-1', 'CTU-Malware-Capture-Botnet-219-2']
 

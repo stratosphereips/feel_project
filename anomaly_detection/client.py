@@ -181,30 +181,33 @@ def main() -> None:
     parser.add_argument("--client_id", type=int, choices=range(1, 11), required=True)
     parser.add_argument("--day", type=int, choices=(range(1,6)), required=True)
     parser.add_argument("--seed", type=int, required=False, default=8181)
+    parser.add_argument("--ip_address", type=str, required=False, default="localhost")
+    parser.add_argument("--port", type=int, required=False, default="8080")
+    parser.add_argument("--data_dir", type=str, required=False, default="/data")
     args = parser.parse_args()
 
     # Load and compile Keras model
     model = get_model()
 
-    X_train, X_test_ben, X_test_mal = load_partition(args. day, args.client_id)
+    X_train, X_test_ben, X_test_mal = load_partition(args.day, args.client_id, args.data_dir)
 
     # Start Flower client
     client = ADClient(model, X_train, X_test_ben, X_test_mal, args.seed)
 
     fl.client.start_numpy_client(
-        server_address="localhost:8080",
+        server_address=f"{args.ip_address}:{args.port}",
         client=client,
         root_certificates=Path(".cache/certificates/ca.crt").read_bytes(),
     )
 
 
-def load_partition(day: int, client_id: int):
+def load_partition(day: int, client_id: int, data_dir):
     """Load 1/5th of the training and test data to simulate a partition."""
     assert client_id in range(1, 11)
     assert day in range(1, 6)
 
-    X_train, X_test_ben = get_ben_data(day, client_id)
-    X_test_mal = get_mal_data()
+    X_train, X_test_ben = get_ben_data(day, client_id, data_dir)
+    X_test_mal = get_mal_data(data_dir)
 
     # num_samples = x_train.shape[0] // 5
     print(f"[+] Num train samples for client{client_id}: {X_train.shape[0]}")
