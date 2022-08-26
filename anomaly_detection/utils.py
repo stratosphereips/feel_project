@@ -52,7 +52,7 @@ def get_mal_data():
 
     for folder in mal_folders:
         mal_data[folder] = pd.DataFrame()
-        df_temp = pd.read_csv(os.path.join(data_dir, 'Raw', 'Malware', folder, 'Day1', "comb_features.csv"))
+        df_temp = pd.read_csv(os.path.join(data_dir, 'Processed', 'Malware', folder, 'Day1', "comb_features.csv"))
         mal_data[folder] = pd.concat([mal_data[folder], df_temp], ignore_index=True)
 
     for folder in mal_folders:
