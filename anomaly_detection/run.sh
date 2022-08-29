@@ -5,7 +5,11 @@ seed=$2
 
 ./certificates/generate.sh
 
+# Clean the previous saved data if they exist
 rm *.npz
+
+# Clean the previous model checkpoints if they exist
+# rm /tmp/checkpoint/*
 
 echo "Starting server"
 python server.py --day=${day} --seed=${seed} --load=1&

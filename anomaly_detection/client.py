@@ -1,3 +1,4 @@
+from gc import callbacks
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -19,10 +20,9 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 # Define Flower client
 class ADClient(fl.client.NumPyClient):
-    def __init__(self, model, X_train, X_test_ben, X_test_mal, seed):
+    def __init__(self, model, X_train, X_test_ben, X_test_mal, seed, checkpoint_filepath):
         self.threshold = 100 # Or other high value
         self.model = model
-        # self.scaler = preprocessing.MinMaxScaler().fit(X_train) 
         
         # Store the data unscaled
         self.X_train = X_train
@@ -55,7 +55,6 @@ class ADClient(fl.client.NumPyClient):
         X_train = scale_data(self.X_train, self.X_min, self.X_max)
         X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=self.seed)
 
-
         # Train the model using hyperparameters from config
         history = self.model.fit(
             X_train,
@@ -70,17 +69,9 @@ class ADClient(fl.client.NumPyClient):
 
         if np.isnan(loss) or np.isnan(val_loss):
             print("[+] HERE!", np.isnan(loss), np.isnan(val_loss))
-            print("[+] HERE!", history.history['loss'])
-            # exit()
-            # Return the previous parameters if the loss exploded
-            return parameters,  0, {
-                        "loss": loss,
-                        "val_loss": val_loss,
-                        "threshold": float(self.threshold),
-                        "X_min": serialize_array(self.X_min),
-                        "X_max": serialize_array(self.X_max)
-                        }
-
+            print("[+] HERE!", val_loss, self.max_loss)
+            self.model.set_weights(parameters)
+        
         # Calculate the threshold based on the local tarining data
         rec = self.model.predict(X_val)
         mse = np.mean(np.power(X_val - rec, 2), axis=1)
@@ -139,22 +130,9 @@ class ADClient(fl.client.NumPyClient):
         for folder in list(self.X_test_mal.keys()):
             anomalies_mal += sum(mse_mal[folder] > self.threshold)
 
-        # Testing MAD scores
-        # print("[*] Sum of anomalous ben points based on MAD:", sum(mad_score(mse_ben) > 3.5))
-
-        # anomalies_mal_mad = 0
-        # for folder in list(self.X_test_mal.keys()):
-        #     anomalies_mal_mad += sum(mad_score(mse_mal[folder]) > 3.5)
-
-        # print("[*] Sum of anomalous mal points based on MAD:", anomalies_mal_mad)  
-
         num_malware = 0
         for folder in list(self.X_test_mal.keys()):
             num_malware += self.X_test_mal[folder].shape[0]  
-
-        # accuracy = ((num_examples_test - anomalies_ben) + anomalies_mal) / (num_examples_test + num_malware)
-        # tpr = anomalies_mal / num_malware
-        # fpr = anomalies_ben / (num_examples_test + num_malware)
 
         fp = int(anomalies_ben)
         tp = int(anomalies_mal)
@@ -186,13 +164,15 @@ def main() -> None:
     parser.add_argument("--data_dir", type=str, required=False, default="/data")
     args = parser.parse_args()
 
+    tf.keras.utils.set_random_seed(args.seed)
+
     # Load and compile Keras model
     model = get_model()
 
     X_train, X_test_ben, X_test_mal = load_partition(args.day, args.client_id, args.data_dir)
 
     # Start Flower client
-    client = ADClient(model, X_train, X_test_ben, X_test_mal, args.seed)
+    client = ADClient(model, X_train, X_test_ben, X_test_mal, args.seed, f'/tmp/checkpoint/client{args.client_id}')
 
     fl.client.start_numpy_client(
         server_address=f"{args.ip_address}:{args.port}",
@@ -201,19 +181,17 @@ def main() -> None:
     )
 
 
-def load_partition(day: int, client_id: int, data_dir):
-    """Load 1/5th of the training and test data to simulate a partition."""
+def load_partition(day: int, client_id: int):
+    """Load the training and test data to simulate a partition."""
     assert client_id in range(1, 11)
     assert day in range(1, 6)
 
     X_train, X_test_ben = get_ben_data(day, client_id, data_dir)
     X_test_mal = get_mal_data(data_dir)
 
-    # num_samples = x_train.shape[0] // 5
     print(f"[+] Num train samples for client{client_id}: {X_train.shape[0]}")
     print(f"[+] Num of features for client{client_id}: {X_train.shape[1]}")
     return X_train, X_test_ben, X_test_mal
-    # return x_train[idx * num_samples : (idx + 1) * num_samples], x_test[idx * num_samples : (idx + 1) * num_samples]
 
 
 if __name__ == "__main__":
