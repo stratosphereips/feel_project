@@ -115,6 +115,7 @@ def main() -> None:
     parser.add_argument("--day", type=int, choices=(range(1,6)), required=True, help="Training day")
     parser.add_argument("--seed", type=int, required=False, default=8181, help="Random seed")
     parser.add_argument("--load", type=int, choices=(0,1), required=False, default=0, help="Load a model from disk or not")
+    parser.add_argument("--data_dir", type=str, required=False, default="/data", help="Path to the data direcotry")
 
     args = parser.parse_args()
     
@@ -136,7 +137,7 @@ def main() -> None:
         min_fit_clients=5,
         min_evaluate_clients=5,
         min_available_clients=5,
-        evaluate_fn=get_eval_fn(model, day),
+        evaluate_fn=get_eval_fn(model, day, args.data_dir),
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
         initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),
@@ -158,18 +159,18 @@ def main() -> None:
     model.save(f'day{day}_{args.seed}_model.h5')
 
 
-def get_eval_fn(model, day):
+def get_eval_fn(model, day, data_dir):
     """Return an evaluation function for server-side evaluation."""
 
     # Load data and model here to avoid the overhead of doing it in `evaluate` itself
     # X_train = pd.DataFrame()
     X_test_ben = pd.DataFrame()
     for client_id in range(1, 11):
-        _, test_temp = get_ben_data(day, client_id)
+        _, test_temp = get_ben_data(day, client_id, data_dir)
         # X_train = pd.concat([X_train, train_temp], ignore_index=True)
         X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
 
-    X_test_mal = get_mal_data()
+    X_test_mal = get_mal_data(data_dir)
 
     # How are we scaling these parameters? A global scaler or the local aggregate?
     # scaler = preprocessing.MinMaxScaler().fit(X_train)
