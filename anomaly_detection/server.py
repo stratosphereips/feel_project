@@ -7,13 +7,12 @@ from pathlib import Path
 import flwr as fl
 import tensorflow as tf
 import numpy as np
-from utils import get_mal_data, get_ben_data, get_model, get_threshold, serialize_array, deserialize_string, scale_data
+from utils import get_mal_data, get_ben_data, get_model, serialize_array, deserialize_string, scale_data
 import pandas as pd
-from sklearn import preprocessing
 import argparse
 import os
 
-class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
+class AggregateCustomMetricStrategy(fl.server.strategy.FedAvgM):
     def __init__(self, **kwds):
         super().__init__(**kwds)
         self.threshold = 1000
@@ -33,6 +32,17 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvg):
         self.threshold = np.mean([r.metrics["threshold"]  for _, r in results])
         print(f"[*] Round {server_round} threshold averaged from client results: {self.threshold:.5f}")
         # if server_round == 10:
+        
+        # # Weigh threshold of each client by number of examples used
+        ths = [r.metrics["threshold"] * r.num_examples for _, r in results if r != None]
+        examples = [r.num_examples for _, r in results if r != None]
+
+        # # Aggregate and print custom metric
+        weighted_th = sum(ths) / sum(examples)
+        print(f"[*] Round {server_round} threshold weighted avg from client results: {weighted_th:.5f}")
+
+        self.threshold = weighted_th
+
         print(f"[*] Saving round {server_round} average threshold...")
         np.savez(f"round-{server_round}-threshold.npz", threshold=self.threshold)
 
@@ -109,13 +119,15 @@ def main() -> None:
     args = parser.parse_args()
     
     day = args.day
+    tf.keras.utils.set_random_seed(args.seed)
+
 
     if args.load and day > 1 and os.path.exists(f'day{day-1}_{args.seed}_model.h5'):
         model = tf.keras.models.load_model(f'day{day-1}_{args.seed}_model.h5')
         num_rounds = 2
     else:
         model = get_model()
-        num_rounds=9
+        num_rounds=10
 
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
@@ -128,6 +140,7 @@ def main() -> None:
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
         initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),
+        server_momentum=0.2
     )
 
     # Start Flower server (SSL-enabled) for four rounds of federated learning
@@ -281,7 +294,6 @@ def evaluate_config(rnd: int):
         "X_min": X_min,
         "X_max": X_max
     }
-
 
 
 if __name__ == "__main__":
