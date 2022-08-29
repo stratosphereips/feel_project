@@ -12,15 +12,15 @@ def get_model():
         [
         tf.keras.layers.Input(shape=(36)),
         tf.keras.layers.Dense(32, activation='elu'),
-        tf.keras.layers.Dropout(0.1),
+        tf.keras.layers.Dropout(0.3),
         tf.keras.layers.Dense(20, activation='elu'),
-        tf.keras.layers.Dropout(0.1),
+        tf.keras.layers.Dropout(0.3),
         tf.keras.layers.Dense(10, activation='elu'),
-        tf.keras.layers.Dropout(0.1),
+        tf.keras.layers.Dropout(0.3),
         tf.keras.layers.Dense(20, activation='elu'),
-        tf.keras.layers.Dropout(0.1),
+        tf.keras.layers.Dropout(0.3),
         tf.keras.layers.Dense(32, activation='elu'),
-        tf.keras.layers.Dropout(0.1),
+        tf.keras.layers.Dropout(0.3),
         tf.keras.layers.Dense(36, activation='elu')
         ]
     )
@@ -34,13 +34,9 @@ def get_ben_data(day: int, client_id: int):
     df_ben_test = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day+1), "comb_features_ben.csv"))
 
     df_ben = df_ben.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
-    # df_ben = df_ben.drop(["ssl_ratio", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
-
     df_ben = df_ben.drop_duplicates()
 
     df_ben_test = df_ben_test.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
-    # df_ben_test = df_ben_test.drop(["ssl_ratio", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
-
     df_ben_test = df_ben_test.drop_duplicates()
 
     return df_ben, df_ben_test
@@ -64,26 +60,12 @@ def get_mal_data():
     return mal_data
 
 def get_threshold(X, mse):
-    num = 0.01*len(X)
+    num = max(0.01*len(X), 2)
 
     th = 0.0001
     while (sum(mse > th) > num):
-        th += 0.001
+        th += 0.0001
     return th
-
-
-# def mad_threshold(mse):
-#     # return 3.5*np.median(np.abs(mse - np.median(mse)))
-#     return 3.5*np.median(np.absolute(mse - np.median(mse)))
-
-
-# def mad_score(points):
-#     """https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm """
-#     m = np.median(points)
-#     ad = np.abs(points - m)
-#     mad = np.median(ad)
-    
-#     return 0.6 * ad / mad
 
 def serialize_array(arr):
     temp_str = ""
@@ -92,7 +74,6 @@ def serialize_array(arr):
         temp_str += '|'
 
     return base64.b64encode(bytes(temp_str, "utf-8"))
-
 
 def deserialize_string(b64_str: str):
     arr = base64.b64decode(b64_str).decode("utf-8", "ignore")
