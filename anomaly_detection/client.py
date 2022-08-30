@@ -181,7 +181,7 @@ def main() -> None:
     )
 
 
-def load_partition(day: int, client_id: int):
+def load_partition(day: int, client_id: int, data_dir: str):
     """Load the training and test data to simulate a partition."""
     assert client_id in range(1, 11)
     assert day in range(1, 6)
