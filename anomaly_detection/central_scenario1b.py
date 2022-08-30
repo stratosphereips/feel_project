@@ -10,19 +10,20 @@ from utils import get_model, get_threshold
 
 data_dir = '/opt/Malware-Project/BigDataset/FEELScenarios/'
 
-
-def create_dataset():
+def create_dataset(day, num_clients=10):
+    clients = np.random.choice(range(1, 11), num_clients, replace=False)
+    print(clients)
     data = dict()
-    for j in range(1, 6):
-        data["Day"+str(j)] = pd.DataFrame()
-        for i in range(1, 11):
-            df_temp = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(i), 'Day'+str(j), "comb_features_ben.csv"))
-            data["Day"+str(j)] = pd.concat([data["Day"+str(j)], df_temp], ignore_index=True)
+    # for j in range(1, 6):
+    data = pd.DataFrame()
+    for i in clients:
+        df_temp = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(i), 'Day'+str(day), "comb_features_ben.csv"))
+        data = pd.concat([data, df_temp], ignore_index=True)
     
 
-    for day in range(1, 6):
-        data["Day"+str(day)] = data["Day"+str(day)].drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
-        data["Day"+str(day)] = data["Day"+str(day)].drop_duplicates()
+    # for day in range(1, 6):
+    data = data.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
+    data = data.drop_duplicates()
 
 
     mal_data = dict()
@@ -39,6 +40,7 @@ def create_dataset():
         mal_data[folder] = mal_data[folder].drop_duplicates()
 
     return data, mal_data
+
 
 def metrics(fp, tp, num_ben, num_malware):
     # fp = anomalies_ben
@@ -57,15 +59,18 @@ def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Centralized training scenario 1a")
     parser.add_argument("--seed", type=int, required=False, default=8181, help="Random state seed.")
+    parser.add_argument("--num_clients", "-n", type=int, choices=(range(1, 11)), required=False, default=10)
+
     args = parser.parse_args()
     
+    tf.keras.utils.set_random_seed(args.seed)
 
     model = get_model() 
-    data, mal_data = create_dataset()
-    mal_folders = list(mal_data.keys())
-    
 
     for day in range(1, 5):
+
+        data, mal_data = create_dataset(day, args.num_clients)
+        mal_folders = list(mal_data.keys())
 
         if day == 1:
             EPOCHS = 8
@@ -75,8 +80,9 @@ def main():
         BATCH_SIZE = 64
 
         scaler = MinMaxScaler()
-        X = scaler.fit_transform(data["Day"+str(day)])
-        X_test = scaler.transform(data["Day"+str(day+1)])
+        X = scaler.fit_transform(data)
+        X_test, _ = create_dataset(day+1, 10)
+        X_test = scaler.transform(X_test)
 
         X_train , X_val = train_test_split(X, test_size=0.2, random_state=args.seed)
 
