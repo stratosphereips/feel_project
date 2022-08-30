@@ -116,6 +116,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, required=False, default=8181, help="Random seed")
     parser.add_argument("--load", type=int, choices=(0,1), required=False, default=0, help="Load a model from disk or not")
     parser.add_argument("--data_dir", type=str, required=False, default="/data", help="Path to the data direcotry")
+    parser.add_argument("--num_clients", type=int, choices=(range(1, 11)), required=False, default=10)
 
     args = parser.parse_args()
     
@@ -129,9 +130,11 @@ def main() -> None:
         model = get_model()
         num_rounds=10
 
+    frac_fit = args.num_clients / 10
+
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
-        fraction_fit=1.0,
+        fraction_fit=frac_fit,
         fraction_evaluate=1.0,
         min_fit_clients=5,
         min_evaluate_clients=5,
