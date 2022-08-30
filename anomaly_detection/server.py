@@ -121,7 +121,6 @@ def main() -> None:
     day = args.day
     tf.keras.utils.set_random_seed(args.seed)
 
-
     if args.load and day > 1 and os.path.exists(f'day{day-1}_{args.seed}_model.h5'):
         model = tf.keras.models.load_model(f'day{day-1}_{args.seed}_model.h5')
         num_rounds = 2
@@ -143,7 +142,7 @@ def main() -> None:
         server_momentum=0.2
     )
 
-    # Start Flower server (SSL-enabled) for four rounds of federated learning
+    # Start Flower server (SSL-enabled) for n rounds of federated learning
     fl.server.start_server(
         server_address="0.0.0.0:8080",
         config=fl.server.ServerConfig(num_rounds=num_rounds),
@@ -170,14 +169,6 @@ def get_eval_fn(model, day):
         X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
 
     X_test_mal = get_mal_data()
-
-    # How are we scaling these parameters? A global scaler or the local aggregate?
-    # scaler = preprocessing.MinMaxScaler().fit(X_train)
-    # X_train = scaler.transform(X_train)
-    # X_test_ben = scaler.transform(X_test_ben)
-
-    # for folder in list(X_test_mal.keys()):
-    #     X_test_mal[folder] = scaler.transform(X_test_mal[folder])
 
     # The `evaluate` function will be called after every round
     def evaluate(
