@@ -114,12 +114,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Flower server")
     parser.add_argument("--day", type=int, choices=(range(1,6)), required=True, help="Training day")
     parser.add_argument("--seed", type=int, required=False, default=8181, help="Random seed")
+    parser.add_argument("--ip_address", type=str, required=False, default="0.0.0.0")
+    parser.add_argument("--port", type=int, required=False, default="8080")
     parser.add_argument("--load", type=int, choices=(0,1), required=False, default=0, help="Load a model from disk or not")
     parser.add_argument("--data_dir", type=str, required=False, default="/data", help="Path to the data direcotry")
-    parser.add_argument("--num_clients", type=int, choices=(range(1, 11)), required=False, default=10)
+    parser.add_argument("--num_fit_clients", type=int, choices=(range(1, 11)), required=False, default=10)
+    parser.add_argument("--num_evaluate_clients", type=int, choices=(range(1, 11)), required=False, default=10)
 
     args = parser.parse_args()
-    
+    assert args.num_fit_clients <= args.num_evaluate_clients
+
     day = args.day
     tf.keras.utils.set_random_seed(args.seed)
 
@@ -128,17 +132,17 @@ def main() -> None:
         num_rounds = 2
     else:
         model = get_model()
-        num_rounds=10
+        num_rounds = 10
 
-    frac_fit = args.num_clients / 10
+    frac_fit = args.num_fit_clients / args.num_evaluate_clients
 
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
         fraction_fit=frac_fit,
         fraction_evaluate=1.0,
-        min_fit_clients=5,
-        min_evaluate_clients=5,
-        min_available_clients=5,
+        min_fit_clients=args.num_fit_clients,
+        min_evaluate_clients=args.num_evaluate_clients,
+        min_available_clients=args.num_evaluate_clients,
         evaluate_fn=get_eval_fn(model, day, args.data_dir),
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
@@ -148,7 +152,7 @@ def main() -> None:
 
     # Start Flower server (SSL-enabled) for n rounds of federated learning
     fl.server.start_server(
-        server_address="0.0.0.0:8080",
+        server_address=f"{args.ip_address}:{args.port}",
         config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
         certificates=(

@@ -14,10 +14,11 @@ python server.py --day ${day} \
                 --seed ${seed} \
                 --load 1 \
                 --data_dir "/opt/Malware-Project/BigDataset/FEELScenarios/" \
-                --num_clients ${num_clients} &
+                --num_fit_clients ${num_clients} \
+                --num_evaluate_clients ${num_clients} &
 sleep 3  # Sleep for 3s to give the server enough time to start
 
-for i in `seq 1 10`; do
+for i in `seq 1 num_clients`; do
     echo "Starting client $i"
     python client.py --day ${day} \
                     --client_id ${i} \
