@@ -78,6 +78,9 @@ class Connection4tuple(object):
         self.issuer_diff = 0
         self.SNI_is_in_CN = 0
 
+        self.label = None
+        self.detailed_label = None
+
         # Function
         # Read top level domain file.
         self.top_level_domain = []
@@ -168,6 +171,12 @@ class Connection4tuple(object):
             self.outbound_packtes += int(split[16])
         except:
             # print("Error: resp pckts has bad formats.")
+            pass
+
+        try:
+            self.label = split[21]
+            self.detailed_label = split[22].strip()
+        except:
             pass
         # perodicity
         # current_time = float(split[0])

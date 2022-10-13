@@ -8,11 +8,12 @@ tw=$4
 if [[ $# -lt 4 ]] ; then
     echo 'Missing input arguments. Usage:'
     echo './generate_features.sh <input_dir> <output_dir> <extractor_dir> <time_window>'
+    echo "got: $@"
     exit 1
 fi
 
-
-# Split the conn.log.labeled and the ssl.log.labeled into the time windows 
+mkdir $out_dir
+# Split the conn.log.labeled and the ssl.log.labeled into the time windows
 awk -v inc=$tw -v out_dir=$out_dir -f split_conn.awk $in_dir/conn.log.labeled $in_dir/ssl.log.labeled
 
 # Get all the genrated folders and copy the x509 log
@@ -29,4 +30,4 @@ done
 python combine_features.py -i $out_dir -o $in_dir 
 
 # Optional better to do it manually in case something bad happens :)
-# rm -rf $2/* 
+rm -rf $2/*
