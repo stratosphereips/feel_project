@@ -4,7 +4,6 @@ warnings.filterwarnings('ignore')
 
 
 import argparse
-import os
 from pathlib import Path
 
 import tensorflow as tf
@@ -14,6 +13,7 @@ import flwr as fl
 from utils import get_ben_data, get_mal_data, get_model, get_threshold,serialize_array, deserialize_string, scale_data
 from sklearn import preprocessing
 from sklearn.model_selection import train_test_split
+import os
 # Make TensorFlow logs less verbose
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -169,7 +169,7 @@ def main() -> None:
     # Load and compile Keras model
     model = get_model()
 
-    X_train, X_test_ben, X_test_mal = load_partition(args.day, args.client_id, args.data_dir)
+    X_train, X_test_ben, X_test_mal = load_partition(args.day, args.client_id, Path(args.data_dir))
 
     # Start Flower client
     client = ADClient(model, X_train, X_test_ben, X_test_mal, args.seed, f'/tmp/checkpoint/client{args.client_id}')
@@ -181,7 +181,7 @@ def main() -> None:
     )
 
 
-def load_partition(day: int, client_id: int, data_dir: str):
+def load_partition(day: int, client_id: int, data_dir: Path):
     """Load the training and test data to simulate a partition."""
     assert client_id in range(1, 11)
     assert day in range(1, 6)

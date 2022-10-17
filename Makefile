@@ -10,5 +10,8 @@ build_anomaly_detection_docker:
 run_client:
 	docker run --network=host --volume "$(DATA_DIR)":/data stratosphere/feel-ad client --client_id $(CLIENT_ID) --day $(DAY) --ip_address $(IP_ADDRESS)
 
+fetch_dataset:
+	wget -O - https://github.com/stratosphereips/feel_data/raw/main/features/data.tar.gz | tar xvz -C .
+
 run_server:
 	docker run --network=host --volume "$(DATA_DIR)":/data stratosphere/feel-ad server --day $(DAY) --ip_address $(IP_ADDRESS) --load $(LOAD_MODEL) --num_fit_clients=$(FIT_CLIENTS) --num_evaluate_clients=$(EVAL_CLIENTS)

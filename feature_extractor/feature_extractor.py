@@ -14,14 +14,15 @@ import pandas as pd
 import os
 
 CNAMES = ["num_flows", "avg_dur", "std_dev_dur", "percent_stdev_dur", "total_size_of_flows_orig", "total_size_of_flows_resp",
-            "ratio_of_sizes", "percent_of_established_states", "inbound_pckts", "outbound_pckts", "periodicity_avg", 
-            "periodicity_stdev", "ssl_ratio", "average_public_key", "tls_version_ratio", "avg_cert_length", 
+            "ratio_of_sizes", "percent_of_established_states", "inbound_pckts", "outbound_pckts", "periodicity_avg",
+            "periodicity_stdev", "ssl_ratio", "average_public_key", "tls_version_ratio", "avg_cert_length",
             "stdev_cert_length", "is_valid_certificate_during_capture", "amount_diff_certificates", "num_domains_in_cert",
             "cert_ratio", "num_certificate_path", "x509_ssl_ratio", "SNI_ssl_ratio", "self_signed_ratio", "is_SNIs_in_SNA_dns",
             "SNI_equal_DstIP", "is_CNs_in_SNA_dns", "ratio_of_differ_SNI_in_ssl_log", "ratio_of_differ_subject_in_ssl_log",
-            "ratio_of_differ_issuer_in_ssl_log", "ratio_of_differ_subject_in_cert", "ratio_of_differ_issuer_in_cert", 
+            "ratio_of_differ_issuer_in_ssl_log", "ratio_of_differ_subject_in_cert", "ratio_of_differ_issuer_in_cert",
             "ratio_of_differ_sandns_in_cert", "ratio_of_same_subjects", "ratio_of_same_issuer", "ratio_is_same_CN_and_SNI",
-            "avg_certificate_exponent", "is_SNI_in_top_level_domain", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"]
+            "avg_certificate_exponent", "is_SNI_in_top_level_domain", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path",
+            "label", "detailedlabel"]
 
 def read_one_capture(path_to_bro_folder, verbosity):
     t0 = time()
@@ -88,7 +89,9 @@ if __name__ == '__main__':
     elif args.zeekfolders:
         # print('Bro folders: {}'.format(args.brofolder))
         print('It is not implemeted.')
-    
+
+    if data is None or not data.size:
+        data = np.empty(shape=(0, len(CNAMES)))
     df = pd.DataFrame(data, columns=CNAMES)
     # print(df.head())
     df.to_csv(os.path.join(args.zeekfolder, args.output), index=False)
