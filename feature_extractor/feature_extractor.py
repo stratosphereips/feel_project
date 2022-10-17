@@ -89,7 +89,9 @@ if __name__ == '__main__':
     elif args.zeekfolders:
         # print('Bro folders: {}'.format(args.brofolder))
         print('It is not implemeted.')
-    
+
+    if data is None or not data.size:
+        data = np.empty(shape=(0, len(CNAMES)))
     df = pd.DataFrame(data, columns=CNAMES)
     # print(df.head())
     df.to_csv(os.path.join(args.zeekfolder, args.output), index=False)

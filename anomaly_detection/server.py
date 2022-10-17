@@ -139,7 +139,7 @@ def main() -> None:
         min_fit_clients=5,
         min_evaluate_clients=5,
         min_available_clients=5,
-        evaluate_fn=get_eval_fn(model, day, args.data_dir),
+        evaluate_fn=get_eval_fn(model, day, Path(args.data_dir)),
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
         initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),

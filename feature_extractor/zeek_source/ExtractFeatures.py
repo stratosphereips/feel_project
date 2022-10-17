@@ -82,7 +82,7 @@ class ExtractFeatures(object):
         # all_conn_logs = get_such_logs(dataset_path_to_logs, ['conn', '_label'])
         all_conn_logs = get_such_logs(dataset_path_to_logs, ['conn'])
         for conn_log in all_conn_logs:
-            if 'label' in conn_log or 'summary' in conn_log:
+            if 'summary' in conn_log:
                 continue
             self.read_conn_log(dataset_path_to_logs + conn_log)
         # print("     << Loaded conn logs: ", len(all_conn_logs))
@@ -97,12 +97,7 @@ class ExtractFeatures(object):
                     split_conn_line = line.split('	')
                     conn_uid = split_conn_line[1]
 
-                    try:
-                        if self.conn_dict[conn_uid]:
-                            # print("Error: more same conn line !")
-                            pass
-                    except:
-                        self.conn_dict[conn_uid] = line
+                    self.conn_dict[conn_uid] = line
             f.close()
         except IOError:
             print("Error: The conn file: " + dataset_path_to_conn + " does not exist.")
@@ -140,7 +135,7 @@ class ExtractFeatures(object):
             self.reading_time_file.append(sub_folder)
         except IOError:
             # It means that this dataset has right time format.
-            print("Did not read time file from ", sub_folder)
+            # print("Did not read time file from ", sub_folder)
             pass
 
         try:

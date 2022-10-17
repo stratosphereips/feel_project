@@ -6,6 +6,7 @@ from typing import Dict, Optional, Tuple, List
 import flwr as fl
 import tensorflow as tf
 import numpy as np
+from pathlib import Path
 from utils import get_mal_data, get_ben_data, get_model, serialize_array, deserialize_string, scale_data
 import pandas as pd
 import argparse
@@ -138,7 +139,7 @@ def main() -> None:
         min_fit_clients=10,
         min_evaluate_clients=10,
         min_available_clients=10,
-        evaluate_fn=get_eval_fn(model, day, args.data_dir),
+        evaluate_fn=get_eval_fn(model, day, Path(args.data_dir)),
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
         initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),
@@ -172,7 +173,7 @@ def get_eval_fn(model, day, data_dir):
         # X_train = pd.concat([X_train, train_temp], ignore_index=True)
         X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
 
-    X_test_mal, _ = get_mal_data(data_dir)
+    X_test_mal = get_mal_data(data_dir)
 
     # The `evaluate` function will be called after every round
     def evaluate(

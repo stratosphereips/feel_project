@@ -20,6 +20,8 @@ class PrintingManager(object):
 
     def init_hello(self, verbosity):
         self.verbosity = verbosity
+        if not verbosity:
+            return
         self.space_1 = '    '
         self.space_2 = self.space_1 + self.space_1
 
@@ -53,7 +55,8 @@ class PrintingManager(object):
             if exit_code == -1:
                 print('There is no conn.log files.')
             elif exit_code == -2:
-                print('Ther is no ssl.log files. Maybe this capture does not contain HTTPS connection.')
+                pass
+                #print('Ther is no ssl.log files. Maybe this capture does not contain HTTPS connection.')
             elif exit_code == -3:
                 print('There is no x509.log files. Maybe this capture does not contain HTTPS connection.')
 

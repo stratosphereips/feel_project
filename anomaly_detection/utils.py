@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import tensorflow as tf
-import os
+from pathlib import Path
 import base64
 
 
@@ -26,34 +26,37 @@ def get_model():
     return model
 
 
-def get_ben_data(day: int, client_id: int, data_dir):
+def get_ben_data(day: int, client_id: int, data_dir: Path):
     
-    df_ben = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day), "comb_features_ben.csv"))
-    df_ben_test = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(client_id), 'Day'+str(day+1), "comb_features_ben.csv"))
+    df_ben = pd.read_csv(Path(data_dir / f'Client{client_id}' / f'Day{day}' / "comb_features.csv"))
+    df_ben_test = pd.read_csv(Path(data_dir / f'Client{client_id}' / f'Day{day+1}' / "comb_features.csv"))
 
-    df_ben = df_ben.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
+    df_ben = df_ben[df_ben.label != 'Malicious']
+    df_ben_test = df_ben_test[df_ben_test.label != 'Malicious']
+
+    df_ben = df_ben.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path", 'label', 'detailedlabel'], axis=1)
     df_ben = df_ben.drop_duplicates()
 
-    df_ben_test = df_ben_test.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
+    df_ben_test = df_ben_test.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path", 'label', 'detailedlabel'], axis=1)
     df_ben_test = df_ben_test.drop_duplicates()
 
     return df_ben, df_ben_test
 
 
 def get_mal_data(data_dir):
-    mal_data = dict()
+    mal_data = {}
     mal_folders = ['CTU-Malware-Capture-Botnet-346-1', 'CTU-Malware-Capture-Botnet-327-2', 'CTU-Malware-Capture-Botnet-230-1', 'CTU-Malware-Capture-Botnet-219-2']
 
     for folder in mal_folders:
         mal_data[folder] = pd.DataFrame()
-        df_temp = pd.read_csv(os.path.join(data_dir, 'Processed', 'Malware', folder, 'Day1', "comb_features.csv"))
+        df_temp = pd.read_csv(Path(data_dir / 'Malware' / folder / 'Day1' / "comb_features.csv"))
         mal_data[folder] = pd.concat([mal_data[folder], df_temp], ignore_index=True)
 
-    for folder in mal_folders:
-        mal_data[folder] = mal_data[folder].drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
+    for folder, df in mal_data.items():
+        df = df[df.label == 'Malicious']
+        df = df.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path", 'label', 'detailedlabel'], axis=1)
         # mal_data[folder] = mal_data[folder].drop(["ssl_ratio", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
-    
-        mal_data[folder] = mal_data[folder].drop_duplicates() 
+        mal_data[folder] = df.drop_duplicates()
 
     return mal_data
 

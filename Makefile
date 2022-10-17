@@ -4,3 +4,5 @@ build_client_docker:
 run_client:
 	docker run --volume "$(DATA_DIR)":/data stratosphere/feel-client --client_id $(CLIENT_ID) --day $(DAY) --ip_address $(IP_ADDRESS)
 
+fetch_dataset:
+	wget -O - https://github.com/stratosphereips/feel_data/raw/main/features/data.tar.gz | tar xvz -C .

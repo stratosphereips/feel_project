@@ -7,9 +7,10 @@ import os
 
 import tensorflow as tf
 import numpy as np
+from pathlib import Path
 
 import flwr as fl
-from utils import get_ben_data, get_mal_data, get_model, get_threshold,serialize_array, deserialize_string, scale_data
+from utils import get_ben_data, get_neg_data, get_mal_data, get_model, get_threshold,serialize_array, deserialize_string, scale_data
 from sklearn.model_selection import train_test_split
 # Make TensorFlow logs less verbose
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -180,7 +181,7 @@ def main() -> None:
     # Load and compile Keras model
     model = get_model()
 
-    X_train, X_test_ben, X_test_mal, X_pos, X_neg = load_partition(args.day, args.client_id, args.data_dir)
+    X_train, X_test_ben, X_test_mal, X_pos, X_neg = load_partition(args.day, args.client_id, Path(args.data_dir))
 
     # Start Flower client
     client = ADClient(model, X_train, X_test_ben, X_test_mal, X_pos, X_neg, args.seed)
@@ -192,15 +193,17 @@ def main() -> None:
     )
 
 
-def load_partition(day: int, client_id: int, data_dir: str):
+def load_partition(day: int, client_id: int, data_dir: Path):
     """Load the training and test data to simulate a partition."""
     assert client_id in range(1, 11)
     assert day in range(1, 6)
 
     X_train, X_test_ben = get_ben_data(day, client_id, data_dir)
-    X_test_mal, neg_df = get_mal_data(data_dir)
+    neg_df = get_neg_data(day, client_id, data_dir)
+    X_test_mal = get_mal_data(data_dir)
 
     num_samples = len(X_train)
+    num_neg_samples = len(neg_df)
     # repeats = num_samples // 15
 
     idx = np.random.randint(0, num_samples, 10)
@@ -212,6 +215,7 @@ def load_partition(day: int, client_id: int, data_dir: str):
     np.random.shuffle(neg_samples)
 
     print(f"[+] Num train samples for client {client_id}: {X_train.shape[0]}")
+    print(f"[+] Num of negative samples for client {client_id}: {num_neg_samples}")
     print(f"[+] Num of features for client {client_id}: {X_train.shape[1]}")
     print(f"[+] Num of positive samples for client {client_id}: {pos_samples.shape[0]}")
     print(f"[+] Num of negative for client {client_id}: {neg_samples.shape[0]}")

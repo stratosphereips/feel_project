@@ -330,6 +330,7 @@ class Connection4tuple(object):
             if split[12] != '-':
                 self.certificate_exponent = int(split[12])
 
+
         # certificate is new, this connection does not contain this certificate
         else:
             self.certificate_serial_dict[split[3]] += 1
