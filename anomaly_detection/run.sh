@@ -17,7 +17,7 @@ python server.py --day ${day} \
                 --num_clients ${num_clients} &
 sleep 3  # Sleep for 3s to give the server enough time to start
 
-for i in `seq 1 10`; do
+for i in `seq 1 num_clients`; do
     echo "Starting client $i"
     python client.py --day ${day} \
                     --client_id ${i} \
