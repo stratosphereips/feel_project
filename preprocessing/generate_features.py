@@ -28,8 +28,12 @@ class FeaturesGenerator:
         self._extractor_path = self._script_dir / '..' / 'feature_extractor' / 'feature_extractor.py'
 
     def generate_client_features(self):
-        for i, client_dir in tqdm(list(enumerate(sorted(self._normal_dir.iterdir()), start=1)), "Client"):
-            for day_dir in tqdm(list(client_dir.iterdir()), "Day"):
+        client_pbar = tqdm(list(enumerate(sorted(self._normal_dir.iterdir()), start=1)))
+        for i, client_dir in client_pbar:
+            client_pbar.set_description(client_dir.name)
+            day_pbar = tqdm(sorted(client_dir.iterdir()))
+            for day_dir in day_pbar:
+                day_pbar.set_description(day_dir.name)
                 if not day_dir.is_dir():
                     continue
 
@@ -38,8 +42,12 @@ class FeaturesGenerator:
                 self._generate_features(day_dir, target_dir)
 
     def generate_malware_features(self):
-        for malware_dir in tqdm(list(sorted(self._malware_dir.iterdir())), "Malware"):
-            for day_dir in tqdm(list(malware_dir.iterdir()), "Day"):
+        mal_pbar = tqdm(list(sorted(self._malware_dir.iterdir())))
+        for malware_dir in mal_pbar:
+            mal_pbar.set_description(malware_dir.name)
+            day_pbar = tqdm(sorted(malware_dir.iterdir()))
+            for day_dir in day_pbar:
+                day_pbar.set_description(day_dir.name)
                 if not day_dir.is_dir() and day_dir.name != 'zeek':
                     continue
 
@@ -56,11 +64,17 @@ class FeaturesGenerator:
                     # this is kinda a magic number, but it's approximately the number of bytes in the header -
                     # if there is only the header, just skip it.
                     return
-                _split_file(logs_dir / f'{file_type}.log.labeled', self._time_window, temp_dir_path)
+                filter_invalid_malware = 'CTU-Malware-Capture-Botnet-346-1' in str(output_dir)
+                _split_file(
+                    logs_dir / f'{file_type}.log.labeled',
+                    self._time_window,
+                    temp_dir_path,
+                    filter_invalid_malware
+                )
 
-            for dir in tqdm(list(temp_dir_path.iterdir()), "Time bucket"):
-                copy(logs_dir / 'x509.log', dir)
-                subprocess.call(['python', str(self._extractor_path), '-v', '0', '-z', str(dir)])
+            for directory in tqdm(list(temp_dir_path.iterdir()), "Time bucket"):
+                copy(logs_dir / 'x509.log', directory)
+                subprocess.call(['python', str(self._extractor_path), '-v', '0', '-z', str(directory)])
 
             combine_features.main(temp_dir_path, output_dir)
 

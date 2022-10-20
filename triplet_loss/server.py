@@ -7,7 +7,9 @@ import flwr as fl
 import tensorflow as tf
 import numpy as np
 from pathlib import Path
-from utils import get_mal_data, get_ben_data, get_model, serialize_array, deserialize_string, scale_data
+from common.utils import serialize_array, deserialize_string, scale_data
+from common.models import get_triplet_loss_model
+from common.data_loading import load_mal_data, load_ben_data
 import pandas as pd
 import argparse
 import os
@@ -127,7 +129,7 @@ def main() -> None:
         model = tf.keras.models.load_model(f'models/day{day-1}_{args.seed}_model')
         num_rounds = 2
     else:
-        model = get_model()
+        model = get_triplet_loss_model()
         num_rounds = 10
 
     frac_fit = args.num_clients / 10
@@ -169,11 +171,11 @@ def get_eval_fn(model, day, data_dir):
     # X_train = pd.DataFrame()
     X_test_ben = pd.DataFrame()
     for client_id in range(1, 11):
-        _, test_temp = get_ben_data(day, client_id, data_dir)
+        _, test_temp = load_ben_data(day, client_id, data_dir)
         # X_train = pd.concat([X_train, train_temp], ignore_index=True)
         X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
 
-    X_test_mal = get_mal_data(data_dir)
+    X_test_mal = load_mal_data(1, data_dir)
 
     # The `evaluate` function will be called after every round
     def evaluate(

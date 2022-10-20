@@ -19,13 +19,15 @@ def main(time_window: int, output_dir: str, *args: List[str]):
         _split_file(Path(file_path), time_window, Path(output_dir))
 
 
-def _split_file(log_file_path: Path, freq: int, out_dir: Path):
+def _split_file(log_file_path: Path, freq: int, out_dir: Path, filter_out_invalid_malware=False):
     header = _get_header(log_file_path)
     if not header:
         print(f'File is empty')
         return
 
     df = LogToDataFrame().create_dataframe(log_file_path)
+    if filter_out_invalid_malware:
+        df = _filter_out_invalid_malware(df)
     if 'duration' in df.columns:
         df['duration'] = df['duration'].transform(lambda x: x.total_seconds())
 
@@ -54,6 +56,11 @@ def _get_header(file_path: Path):
                 break
             header.append(line)
     return header
+
+
+def _filter_out_invalid_malware(df):
+    invalid_malware_mask = (df['id.resp_p'] == 443) & (df['detailedlabel'] == 'CC-with-MITM-from-analysts')
+    return df[~invalid_malware_mask]
 
 
 if __name__ == '__main__':

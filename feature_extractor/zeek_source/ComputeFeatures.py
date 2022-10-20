@@ -125,6 +125,7 @@ class ComputeFeatures(ExtractFeatures, PrintingManager):
             line.append(connection.ratio_missing_cert_in_cert_path())
             line.append(connection.label)
             line.append(connection.detailed_label)
+            line += list(four_tuple)
             # line.append(self.connection_4_tuples[key].ratio_of_root_certificates())
             self.data_model.append(line)
 

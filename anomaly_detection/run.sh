@@ -4,6 +4,9 @@ day=$1
 seed=$2
 num_clients=$3
 
+PROJECT_DIR="$(readlink -f ..)"
+export PYTHONPATH="${PYTHONPATH}:${PROJECT_DIR}"
+
 ./certificates/generate.sh
 
 # Clean the previous saved data if they exist

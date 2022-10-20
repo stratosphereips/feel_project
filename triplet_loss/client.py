@@ -10,7 +10,9 @@ import numpy as np
 from pathlib import Path
 
 import flwr as fl
-from utils import get_ben_data, get_neg_data, get_mal_data, get_model, get_threshold,serialize_array, deserialize_string, scale_data
+from common.utils import get_threshold, serialize_array, deserialize_string, scale_data
+from common.data_loading import load_mal_data, load_ben_data
+from common.models import get_triplet_loss_model
 from sklearn.model_selection import train_test_split
 # Make TensorFlow logs less verbose
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -179,7 +181,7 @@ def main() -> None:
     tf.keras.utils.set_random_seed(args.seed)
 
     # Load and compile Keras model
-    model = get_model()
+    model = get_triplet_loss_model()
 
     X_train, X_test_ben, X_test_mal, X_pos, X_neg = load_partition(args.day, args.client_id, Path(args.data_dir))
 
@@ -198,9 +200,9 @@ def load_partition(day: int, client_id: int, data_dir: Path):
     assert client_id in range(1, 11)
     assert day in range(1, 6)
 
-    X_train, X_test_ben = get_ben_data(day, client_id, data_dir)
-    neg_df = get_neg_data(day, client_id, data_dir)
-    X_test_mal = get_mal_data(data_dir)
+    X_train, X_test_ben = load_ben_data(day, client_id, data_dir)
+    neg_df = load_mal_data(day, data_dir)['CTU-Malware-Capture-Botnet-67-1']
+    X_test_mal = load_mal_data(1, data_dir)
 
     num_samples = len(X_train)
     num_neg_samples = len(neg_df)

@@ -4,12 +4,14 @@ import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 import argparse
-import os
 import datetime
+from pathlib import Path
 
-from utils import get_model, get_threshold
+from common.utils import get_threshold
+from common.models import get_triplet_loss_model
+from common.data_loading import load_mal_data, load_ben_data
 
-data_dir = '../data'
+data_dir = Path('../data')
 
 # tf.config.run_functions_eagerly(True)
 
@@ -20,32 +22,12 @@ def create_dataset(day, num_clients=10):
     # for j in range(1, 6):
     data = pd.DataFrame()
     for i in clients:
-        df_temp = pd.read_csv(os.path.join(data_dir, 'Processed', 'Client'+str(i), 'Day'+str(day), "comb_features_ben.csv"))
+        df_temp, _ = load_ben_data(day, i, data_dir)
         data = pd.concat([data, df_temp], ignore_index=True)
-    
-    data = data.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
-    data = data.drop_duplicates()
 
-    mal_data = dict()
-    mal_folders = ['CTU-Malware-Capture-Botnet-346-1', 'CTU-Malware-Capture-Botnet-327-2', 'CTU-Malware-Capture-Botnet-230-1', 'CTU-Malware-Capture-Botnet-219-2']
+    mal_data = load_mal_data(1, data_dir)
 
-    for folder in mal_folders:
-        mal_data[folder] = pd.DataFrame()
-        df_temp = pd.read_csv(os.path.join(data_dir, 'Processed', 'Malware', folder, 'Day1', "comb_features.csv"))
-        mal_data[folder] = pd.concat([mal_data[folder], df_temp], ignore_index=True)
-    
-    # Drop columns and possible duplicates
-    # neg_samples = []
-    for folder in mal_folders:
-        mal_data[folder] = mal_data[folder].drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
-        mal_data[folder] = mal_data[folder].drop_duplicates()
-
-        idx = np.random.randint(0, len(mal_data[folder]), size=1)
-        # neg_samples.append(mal_data[folder].values[idx])
-
-    neg_df = pd.read_csv(os.path.join(data_dir, 'Processed', 'Malware', 'CTU-Malware-Capture-Botnet-67-1', 'Day1', "comb_features.csv"))
-    neg_df = neg_df.drop(["ssl_ratio", "self_signed_ratio", "SNI_equal_DstIP", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path"], axis=1)
-    neg_df = neg_df.drop_duplicates()
+    neg_df = load_mal_data(day, data_dir)['CTU-Malware-Capture-Botnet-67-1']
 
     print("Size of negative dataframe:", len(neg_df))
 
@@ -88,7 +70,7 @@ def main():
     num_clients = args.num_clients
 
     tf.keras.utils.set_random_seed(args.seed)
-    model = get_model() 
+    model = get_triplet_loss_model()
     data, mal_data, X_pos, X_neg = create_dataset(day, num_clients)
     mal_folders = list(mal_data.keys())
     
