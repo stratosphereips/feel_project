@@ -141,13 +141,15 @@ def main() -> None:
 
     frac_fit = args.num_fit_clients / args.num_evaluate_clients
 
+    assert args.num_fit_clients <= args.num_evaluate_clients
+
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
         fraction_fit=frac_fit,
         fraction_evaluate=1.0,
-        min_fit_clients=5,
-        min_evaluate_clients=5,
-        min_available_clients=5,
+        min_fit_clients=args.num_fit_clients,
+        min_evaluate_clients=args.num_evaluate_clients,
+        min_available_clients=args.num_evaluate_clients,
         evaluate_fn=get_eval_fn(model, day, Path(args.data_dir)),
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
