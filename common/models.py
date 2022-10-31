@@ -66,7 +66,7 @@ class AutoEncoder(tf.keras.layers.Layer):
         # self.original_dim = 36
         self.encoder = Encoder(latent_dim=10)
         self.decoder = Decoder(36)
-        self.margin = 1.0
+        self.margin = 2.0
 
     def call(self, inputs, positive, negative):
         z = self.encoder(inputs)
