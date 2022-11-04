@@ -3,6 +3,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 from collections import defaultdict
+import numpy as np
 
 _label_cols = ['label', 'detailedlabel']
 _id_cols = ['id.orig_h', 'id.resp_h', 'id.orig_p', 'proto']
@@ -31,7 +32,11 @@ def load_mal_data(day: int, data_dir: Path, drop_labels=True, drop_four_tuple=Tr
     return mal_data
 
 
-def create_supervised_dataset(df_ben: pd.DataFrame, df_mal: pd.DataFrame, test_ratio=0.2, seed=None):
+def create_supervised_dataset(df_ben: pd.DataFrame, df_mal: pd.DataFrame, test_ratio=0.2, seed=None, resize_mal=False):
+    if resize_mal:
+        resized_array = np.resize(df_mal.to_numpy(), (df_ben.shape[0], df_mal.shape[1]))
+        df_mal = pd.DataFrame(resized_array, columns=df_mal.columns)
+
     df = pd.concat((df_ben, df_mal), axis=0)
 
     y = (df.label == 'Malicious').astype('double').to_numpy()
@@ -73,7 +78,7 @@ def _load_data(data_dir: Path, drop_labels, drop_four_tuple, drop_malicious=Fals
         dropped_cols += _id_cols
 
     if drop_malicious:
-        df = df[df.label != 'Malicious']
+        df = df[df.label == 'Benign']
 
     return df.drop(dropped_cols, axis=1) \
         .drop_duplicates()

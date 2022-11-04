@@ -3,6 +3,8 @@ import numpy as np
 from collections import defaultdict
 import pickle
 from sklearn.base import BaseEstimator, TransformerMixin
+import umap
+from matplotlib import pyplot as plt
 
 
 def get_threshold(X, mse):
@@ -138,3 +140,22 @@ def pprint_cm(cm, labels, hide_zeroes=False, hide_diagonal=False, hide_threshold
                 cell = cell if cm[i, j] > hide_threshold else empty_cell
             print(cell, end=" ")
         print()
+
+
+def plot_embedding(X, y, model):
+    dim_red = umap.UMAP()
+    encoded = model.embed(X)
+    print(encoded.shape)
+    embedded = dim_red.fit_transform(encoded)
+    labels = ['Benign', 'Malicious']
+    fig = plt.figure(figsize=(10, 7))
+    ax = fig.add_subplot()  # (projection='3d')
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22',
+              '#17becf']
+    for cls in sorted(set(y.astype('int'))):
+        ax.scatter(embedded[y == cls, 0], embedded[y == cls, 1], c=colors[cls], label=labels[cls],
+                   alpha=1 if cls == 0 else 1)
+    ax.legend()
+    plt.title("Embedding by the vanilla Auto Encoder mapped by UMAP")
+    plt.savefig('embedding_vanilla_ae.png')
+    plt.show()

@@ -13,15 +13,15 @@ export PYTHONPATH="${PYTHONPATH}:${PROJECT_DIR}"
 # Clean the previous saved data if they exist
 rm *.npz
 
-echo "Starting server for day ${day}, seed ${seed}, and ${num_clients} clients."
-python server.py --day ${day} \
-                --model_path ${model_path}\
-                --seed ${seed} \
-                --data_dir "../data" \
-                --num_clients  ${num_clients} &
-sleep 6  # Sleep for 3s to give the server enough time to start
+#echo "Starting server for day ${day}, seed ${seed}, and ${num_clients} clients."
+#python server.py --day ${day} \
+#                --model_path ${model_path}\
+#                --seed ${seed} \
+#                --data_dir "../data" \
+#                --num_clients  ${num_clients} &
+#sleep 6  # Sleep for 3s to give the server enough time to start
 
-for i in `seq 1 $num_clients`; do
+for i in 1 2 3 4 5 6 7 8 9 10; do
     echo "Starting client $i"
     python client.py --day ${day} \
                     --model_path ${model_path}\

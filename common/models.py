@@ -1,6 +1,10 @@
+from dataclasses import dataclass
+from typing import Optional, List
+
 import tensorflow as tf
 import tensorflow_addons as tfa
 from pathlib import Path
+import numpy as np
 
 
 def get_ad_model(dropout=0.2):
@@ -23,61 +27,30 @@ def get_ad_model(dropout=0.2):
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss="mse")
     return model
 
-class FreezableModel(tf.keras.Model):
-    def freeze(self):
-        for layer in self.layers[:]:
-            layer.trainable = False
 
-    def unfreeze(self):
-        for layer in self.layers[:]:
-            layer.trainable = True
+def get_triplet_loss_model():
+    inputs = tf.keras.Input(shape=(36))
+    pos = tf.keras.Input(shape=(36))
+    neg = tf.keras.Input(shape=(36))
 
+    ae = AutoEncoder()
+    outputs = ae(inputs, pos, neg)
 
-class Encoder(FreezableModel):
-    def __init__(self, latent_dim=10, **kwargs):
-        super(Encoder, self).__init__(**kwargs)
-        self.l1 = tf.keras.layers.Dense(32, activation='elu')
-        self.l2 = tf.keras.layers.Dense(20, activation='elu')
-        self.l3 = tf.keras.layers.Dense(latent_dim, activation='sigmoid')
-        self.drop = tf.keras.layers.Dropout(0.3)
-        self.layers = [self.l1, self.drop, self.l2, self.drop, self.l3]
+    loss_fn = tf.keras.losses.MeanSquaredError()
+    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
 
-    def call(self, inputs):
-        x = self.l1(inputs)
-        x = self.drop(x)
-        x = self.l2(x)
-        x = self.drop(x)
-        z = self.l3(x)
+    model = tf.keras.Model([inputs, pos, neg], outputs)
+    model.compile(optimizer=optimizer, loss=loss_fn, run_eagerly=True)
 
-        return z
-
-    def sequential(self):
-        return tf.keras.Sequential([
-            self.l1,
-            self.drop,
-            self.l2,
-            self.drop,
-            self.l3,
-        ])
+    return model
 
 
-class Decoder(FreezableModel):
-    """Converts z, the encoded digit vector, back into a readable digit."""
+def get_classification_model(model_path: Path, n_classes=2, encoder_lr=0.001, classifier_lr=0.1,
+                             freeze_encoder_layers=False, dropout=0.3):
+    encoder = _load_encoder_model(model_path)
+    model = _add_classification_layers(encoder, n_classes, encoder_lr, classifier_lr, freeze_encoder_layers, dropout)
 
-    def __init__(self, original_dim=36, **kwargs):
-        super(Decoder, self).__init__(**kwargs)
-        self.l1 = tf.keras.layers.Dense(20, activation='elu')
-        self.l2 = tf.keras.layers.Dense(32, activation='elu')
-        self.l3 = tf.keras.layers.Dense(original_dim, activation='elu')
-        self.drop = tf.keras.layers.Dropout(0.3)
-        self.layers = [self.l1, self.drop, self.l2, self.drop, self.l3]
-
-    def call(self, inputs):
-        x = self.l1(inputs)
-        x = self.drop(x)
-        x = self.l2(x)
-        x = self.drop(x)
-        return self.l3(x)
+    return model
 
 
 class AutoEncoder(tf.keras.layers.Layer):
@@ -114,52 +87,236 @@ class AutoEncoder(tf.keras.layers.Layer):
 
 
 class MultiHeadAutoEncoder(tf.keras.Model):
-    def __init__(self, encoder_lr, decoder_lr, classifier_lr, disable_classifier=False):
-        super(AutoEncoder, self).__init__()
-        self.encoder = Encoder(latent_dim=10)
-        self.decoder = Decoder(36)
-        self.classifier = Classifier(10, 2, )
+    def __init__(self, encoder_lr=1e-6, decoder_lr=1e-6, classifier_lr=1e-3, disable_classifier=False,
+                 variational=False):
+        super().__init__()
+        self.disable_classifier = disable_classifier
+        latent_dim = 5
+        self.variational = variational
+        self.encoder = Encoder(latent_dim=latent_dim)
+        self.tracker = MetricsTracker(self.variational)
 
-        multi_optimizer = tfa.optimizers.MultiOptimizer([
-            (tf.keras.optimizers.Adam(learning_rate=encoder_lr), self.encoder.layers),
-            (tf.keras.optimizers.Adam(learning_rate=decoder_lr), self.decoder.layers),
-            (tf.keras.optimizers.Adam(learning_rate=classifier_lr), self.classifier.layers),
+        if variational:
+            self.z_mean = tf.keras.layers.Dense(latent_dim, name="z_mean")
+            self.z_log_var = tf.keras.layers.Dense(latent_dim, name="z_log_var")
+            self.sampling = Sampling()
+
+        self.decoder = Decoder(36)
+
+        self.classifier = Classifier(5, 2)
+        # lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        #     5e-3, 250, 1.1, staircase=False, name=None
+        # )
+        #
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=5e-1)
+
+        # self.optimizer = tfa.optimizers.MultiOptimizer([
+        #     (tf.keras.optimizers.Adam(learning_rate=encoder_lr), self.encoder),
+        #     (tf.keras.optimizers.Adam(learning_rate=decoder_lr), self.decoder),
+        #     (tf.keras.optimizers.Adam(learning_rate=classifier_lr), self.classifier),
+        # ])
+
+    def call(self, inputs):
+        X_true, y_true = inputs[:, :-1], inputs[:, -1]
+        embedded = self.encoder(X_true)
+
+        if self.variational:
+            z_mean = self.z_mean(embedded)
+            z_log_var = self.z_log_var(embedded)
+            embedded = self.sampling([z_mean, z_log_var])
+
+        reconstructed = self.decoder(embedded[y_true == 0])
+
+        n_benign, dim = reconstructed.shape
+        n_mal = len(y_true) - n_benign
+
+        ben_mask = (y_true == 0)
+        mal_mask = (y_true == 1)
+        ben_mask_diag = tf.linalg.tensor_diag(tf.cast(ben_mask, 'float32'))
+        mal_mask_diag = tf.linalg.tensor_diag(tf.cast(mal_mask, 'float32'))
+
+        ben_mask_matrix = tf.boolean_mask(ben_mask_diag, ben_mask, axis=0)
+        mal_mask_matrix = tf.boolean_mask(mal_mask_diag, mal_mask, axis=0)
+
+        reconstructed_all = tf.transpose(mal_mask_matrix) @ (tf.ones((n_mal, dim)) * -10)
+        reconstructed_all += tf.transpose(ben_mask_matrix) @ reconstructed
+
+        out = [reconstructed_all, embedded]
+        if not self.disable_classifier:
+            y_pred = self.classifier(embedded)
+            out.append(y_pred)
+
+        if self.variational:
+            out += [z_mean, z_log_var]
+
+        return tf.concat(out, axis=1)
+
+    @property
+    def metrics(self):
+        return self.tracker.get_trackers()
+
+    def compile(self):
+        loss = MultiHeadLoss(self.tracker, margin=3, disable_classifier=self.disable_classifier,
+                             variational=self.variational)
+        super().compile(optimizer=self.optimizer, loss=loss, run_eagerly=True)
+        self.predict(np.zeros((32, 36)))
+
+    def predict(self, inputs):
+        z = self.embed(inputs)
+        reconstructed = self.decoder(z)
+        y_pred = self.classifier(z)
+
+        return tf.concat([reconstructed, y_pred], axis=1).numpy()
+
+    def embed(self, inputs):
+        embedded = self.encoder(inputs)
+        if self.variational:
+            z_mean = self.z_mean(embedded)
+            z_log_var = self.z_log_var(embedded)
+            embedded = self.sampling([z_mean, z_log_var])
+        return embedded
+
+
+class MetricsTracker:
+    def __init__(self, variational=False):
+        self.total = tf.keras.metrics.Mean(name="total_loss")
+        self.classification = tf.keras.metrics.Mean(name="classification_loss")
+        self.reconstruction = tf.keras.metrics.Mean(name="reconstruction_loss")
+        self.variational = variational
+        if variational:
+            self.kl = tf.keras.metrics.Mean(name="kl_loss")
+
+    def get_trackers(self) -> List['MetricsTracker']:
+        trackers = [self.total, self.classification, self.reconstruction]
+        if self.variational:
+            trackers.append(self.kl)
+        return trackers
+
+
+class MultiHeadLoss(tf.keras.losses.Loss):
+    def __init__(self, tracker: MetricsTracker, margin=1.0, dim=36, variational=False, disable_classifier=False):
+        super().__init__()
+        self.dim = dim
+        self.margin = margin
+        self.bce = tf.keras.losses.BinaryCrossentropy()
+        self.mce = tf.keras.losses.MeanSquaredError()
+        self.tracker = tracker
+        self.variational = variational
+        self.disable_classifier = disable_classifier
+
+    def call(self, inputs_true, inputs_pred):
+        """
+
+        @param inputs_true: Expects the shape of the array be [X, y]; shape = (n_samples, dim + 1)
+        @param inputs_pred: Expect the shape of array to be [X_reconstructed, X_embedded, y];
+        shape = (n_samples, dim + embedding_dim + 1)
+        @return:
+        """
+        total_loss = 0
+        if self.variational:
+            z_mean = inputs_pred[:, -4:-2]
+            z_log_var = inputs_pred[:, -2:]
+            inputs_pred = inputs_pred[:, :-4]
+            kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
+            kl_loss = tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1)) * 10000
+            self.tracker.kl.update_state(kl_loss)
+            total_loss += kl_loss
+
+        label_true = inputs_true[:, -1]
+        label_pred = inputs_pred[:, -1]
+
+        reconstructed_true = inputs_true[:, :self.dim]
+        reconstructed_pred = inputs_pred[:, :self.dim]
+
+        reconstructed_true_ben = tf.boolean_mask(reconstructed_true, label_true == 0, axis=0)
+        reconstructed_pred_ben = tf.boolean_mask(reconstructed_pred, label_true == 0, axis=0)
+
+        if not self.disable_classifier:
+            cross_entropy_loss = self.bce(label_true, label_pred)
+            self.tracker.classification.update_state(cross_entropy_loss)
+            total_loss += cross_entropy_loss
+
+        reconstruction_loss = self.mce(reconstructed_true_ben, reconstructed_pred_ben)
+        self.tracker.reconstruction.update_state(reconstruction_loss)
+
+        total_loss += reconstruction_loss
+        self.tracker.total.update_state(total_loss)
+
+        return total_loss
+
+
+class Classifier(tf.keras.layers.Layer):
+    def __init__(self, in_dim=10, n_classes=2, dropout=0.0):
+        super().__init__()
+        # self.cl1 = tf.keras.layers.Dense(in_dim, name='DenseCls1', activation='sigmoid')
+        # self.drop = tf.keras.layers.Dropout(dropout, name='ClsDroupout')
+        self.cl2 = tf.keras.layers.Dense(n_classes if n_classes != 2 else 1, name='DenseCls2', activation='sigmoid')
+
+    def call(self, X):
+        X_prime = X
+        # X_prime = self.cl1(X)
+        # X_prime = self.drop(X_prime)
+        X_prime = self.cl2(X_prime)
+        return X_prime
+
+
+class Sampling(tf.keras.layers.Layer):
+    """Uses (z_mean, z_log_var) to sample z, the vector encoding"""
+
+    def call(self, inputs):
+        z_mean, z_log_var = inputs
+        batch = tf.shape(z_mean)[0]
+        dim = tf.shape(z_mean)[1]
+        epsilon = tf.keras.backend.random_normal(shape=(batch, dim))
+        return z_mean + tf.exp(0.5 * z_log_var) * epsilon
+
+
+class Encoder(tf.keras.layers.Layer):
+    def __init__(self, latent_dim=10, **kwargs):
+        super(Encoder, self).__init__(**kwargs)
+        self.l1 = tf.keras.layers.Dense(32, activation='elu')
+        self.l2 = tf.keras.layers.Dense(18, activation='elu')
+        self.l3 = tf.keras.layers.Dense(latent_dim, activation='sigmoid')
+        self.drop = tf.keras.layers.Dropout(0.3)
+        self.layer_list = [self.l1, self.drop, self.l2, self.drop, self.l3]
+
+    def call(self, inputs):
+        x = self.l1(inputs)
+        x = self.drop(x)
+        x = self.l2(x)
+        x = self.drop(x)
+        z = self.l3(x)
+
+        return z
+
+    def sequential(self):
+        return tf.keras.Sequential([
+            self.l1,
+            self.drop,
+            self.l2,
+            self.drop,
+            self.l3,
         ])
 
 
+class Decoder(tf.keras.layers.Layer):
+    """Converts z, the encoded digit vector, back into a readable digit."""
 
+    def __init__(self, original_dim=36, **kwargs):
+        super(Decoder, self).__init__(**kwargs)
+        self.l1 = tf.keras.layers.Dense(18, activation='elu')
+        self.l2 = tf.keras.layers.Dense(32, activation='elu')
+        self.l3 = tf.keras.layers.Dense(original_dim, activation='elu')
+        self.drop = tf.keras.layers.Dropout(0.3)
+        self.layer_list = [self.l1, self.drop, self.l2, self.drop, self.l3]
 
+    def call(self, inputs):
+        x = self.l1(inputs)
+        x = self.drop(x)
+        x = self.l2(x)
+        x = self.drop(x)
+        return self.l3(x)
 
-def get_triplet_loss_model():
-    inputs = tf.keras.Input(shape=(36))
-    pos = tf.keras.Input(shape=(36))
-    neg = tf.keras.Input(shape=(36))
-
-    ae = AutoEncoder()
-    outputs = ae(inputs, pos, neg)
-
-    loss_fn = tf.keras.losses.MeanSquaredError()
-    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-3)
-
-    model = tf.keras.Model([inputs, pos, neg], outputs)
-    model.compile(optimizer=optimizer, loss=loss_fn)
-
-    return model
-
-
-def get_classification_model(model_path: Path, n_classes=2, encoder_lr=0.001, classifier_lr=0.1,
-                             freeze_encoder_layers=False, dropout=0.3):
-    encoder = _load_encoder_model(model_path)
-    model = _add_classification_layers(encoder, n_classes, encoder_lr, classifier_lr, freeze_encoder_layers, dropout)
-
-    return model
-
-
-# def _load_encoder_model(model_path: Path):
-#     ad_model = tf.keras.models.load_model(model_path)
-#     while len(ad_model.layers) > 6:
-#         ad_model.pop()
-#     return ad_model
 
 def _load_encoder_model(model_path: Path):
     ae_model = tf.keras.models.load_model(model_path, custom_objects={'AutoEncoder': AutoEncoder, 'Encoder': Encoder,
@@ -199,25 +356,3 @@ def _add_classification_layers(model: tf.keras.Sequential, n_classes=2, encoder_
                   else 'cce')
 
     return model
-
-
-class Classifier(FreezableModel):
-    def __init__(self, in_dim=10, n_classes=2, dropout=0.3):
-        self.cl1 = tf.keras.layers.Dense(in_dim, name='DenseCls1', actication='sigmoid')
-        self.drop = tf.keras.layers.Dropout(dropout, name='ClsDroupout')
-        self.cl2 = tf.keras.layers.Dense(n_classes if n_classes != 2 else 1, name='DenseCls2', activation='sigmoid')
-        self.layers = [self.cl1, self.drop, self.cl2]
-
-    def call(self, X):
-        X_prime = X
-        for layer in self.layers:
-            X_prime = layer(X_prime)
-        return X_prime
-
-    def freeze(self):
-        for layer in self.layers[:]:
-            layer.trainable = False
-
-    def unfreeze(self):
-        for layer in self.layers[:]:
-            layer.trainable = True

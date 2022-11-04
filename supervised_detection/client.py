@@ -10,7 +10,7 @@ from pathlib import Path
 
 import flwr as fl
 from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset
-from common.models import get_classification_model
+from common.models import get_classification_model, MultiHeadAutoEncoder
 from common.utils import get_threshold, serialize_array, \
     deserialize_string, client_malware_map, MinMaxScaler, serialize, deserialize
 from fire import Fire
@@ -53,13 +53,15 @@ class ADClient(fl.client.NumPyClient):
         """Train parameters on the locally held training set."""
         X_train = self.scaler.transform(self.X_train)
         X_val = self.scaler.transform(self.X_val)
+        X_train = np.concatenate([X_train, self.y_train.reshape(-1, 1)], axis=1).astype('float32')
+        X_val = np.concatenate([X_val, self.y_val.reshape(-1, 1)], axis=1).astype('float32')
 
         num_examples_train = len(X_train)
         num_malicious = (self.y_train == 1.0).sum()
 
-        if num_malicious < 10:
-            self.log.warning('Client has too few malicious examples for supervised training - skipping it.')
-            return [], 0, {}
+        # if num_malicious < 10:
+        #     self.log.warning('Client has too few malicious examples for supervised training - skipping it.')
+        #     return [], 0, {}
         # Update local model parameter
         self.model.set_weights(parameters)
 
@@ -73,14 +75,16 @@ class ADClient(fl.client.NumPyClient):
         # Train the model using hyperparameters from config
         history = self.model.fit(
             x=X_train,
-            y=self.y_train,
+            y=X_train,
             batch_size=batch_size,
             epochs=epochs,
-            validation_data=(X_val, self.y_val)
+            validation_data=(X_val, X_val)
         )
 
-        loss = history.history["loss"][0]
-        val_loss = history.history["val_loss"][0]
+        loss = history.history["total_loss"][0]
+        val_loss = history.history["val_total_loss"][0]
+        val_reconstruction_loss = history.history['val_reconstruction_loss'][0]
+        val_classification_loss = history.history['val_classification_loss'][0]
 
         if np.isnan(loss) or np.isnan(val_loss):
             print("[+] HERE!", np.isnan(loss), np.isnan(val_loss))
@@ -91,9 +95,12 @@ class ADClient(fl.client.NumPyClient):
         parameters_prime = self.model.get_weights()
 
         results = {
+            "id": self.client_id,
             "loss": loss,
             #"accuracy": history.history["accuracy"][0],
             "val_loss": val_loss,
+            'val_classification_loss': val_classification_loss,
+            'val_reconstruction_loss': val_reconstruction_loss,
             #"val_accuracy": history.history["val_accuracy"][0],
             "scaler": self.scaler.dump()
         }
@@ -109,26 +116,27 @@ class ADClient(fl.client.NumPyClient):
             return 0.0, 0, {}
         # Update local model with global parameters
         self.model.set_weights(parameters)
+        print(f'Client {self.client_id} - classifier disabled: {self.model.disable_classifier}')
 
         # Get config values
         # steps: int = config["val_steps"]
-        if 'scaler' in config:
-            self.scaler = MinMaxScaler.load(config["scaler"])
+        # if 'scaler' in config:
+        #     self.scaler = MinMaxScaler.load(config["scaler"])
 
         X_test = self.scaler.transform(self.X_test)
         num_examples_test = len(X_test)
 
-        # Evaluate global model parameters on the local test data and return results
-        loss = self.model.evaluate(X_test, self.y_test, 64, steps=None)
+        Xy = np.concatenate([X_test, self.y_test.reshape(-1, 1)], axis=1).astype('float32')
+        loss, _, _ = self.model.evaluate(Xy, Xy)
 
-        y_pred = self.model.predict(X_test)
-        print(y_pred)
-        y_pred = (y_pred > 0.5).astype(float).T[0]
+        y_pred_raw = self.model.predict(X_test)
+        y_pred = (y_pred_raw[:, -1] > 0.5).astype(float).T
 
         report = classification_report(self.y_test, y_pred, target_names=['Benign', 'Malicious'], output_dict=True)
         conf_matrix = confusion_matrix(self.y_test, y_pred)
 
         num_malware = (self.y_test == 1).sum()
+        num_benign = (self.y_test == 0).sum()
 
         anomalies_mask = y_pred == 1
         anomalies_true = self.y_test[anomalies_mask]
@@ -138,7 +146,7 @@ class ADClient(fl.client.NumPyClient):
         tn = num_examples_test - fp
 
         tpr = tp / num_malware
-        fpr = fp / num_malware
+        fpr = fp / num_benign
 
         eval_results = {
             "anomalies_ben": fp,
@@ -167,11 +175,13 @@ def main(client_id: int, day: int, model_path: str, seed: int = 8181, ip_address
 
     tf.keras.utils.set_random_seed(seed)
 
-    # Load and compile Keras model
-    model = get_classification_model(model_path, encoder_lr=1e-4, classifier_lr=5e-3, dropout=0.0)
-
-
     X_train, X_val, X_test, y_train, y_val, y_test = load_partition(day, client_id, Path(data_dir), seed)
+
+    disable_classifier = (y_train == 1).sum() < 10
+    # Load and compile Keras model
+    model = MultiHeadAutoEncoder(disable_classifier=disable_classifier)
+    model.compile()
+
 
     # Start Flower client
     client = ADClient(client_id, model, X_train, X_val, X_test, y_train, y_val, y_test, seed)
