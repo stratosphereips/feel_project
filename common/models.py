@@ -1,10 +1,14 @@
 from dataclasses import dataclass
+from itertools import zip_longest
 from typing import Optional, List
 
 import tensorflow as tf
 import tensorflow_addons as tfa
 from pathlib import Path
 import numpy as np
+from copy import deepcopy
+
+from common.utils import deserialize, serialize
 
 
 def get_ad_model(dropout=0.2):
@@ -87,14 +91,14 @@ class AutoEncoder(tf.keras.layers.Layer):
 
 
 class MultiHeadAutoEncoder(tf.keras.Model):
-    def __init__(self, encoder_lr=1e-6, decoder_lr=1e-6, classifier_lr=1e-3, disable_classifier=False,
-                 variational=False):
+    def __init__(self, learning_rate=None, disable_classifier=False,
+                 variational=False, proximal=False, mu=5):
         super().__init__()
         self.disable_classifier = disable_classifier
-        latent_dim = 5
+        latent_dim = 10
         self.variational = variational
         self.encoder = Encoder(latent_dim=latent_dim)
-        self.tracker = MetricsTracker(self.variational)
+        self.tracker = MetricsTracker()
 
         if variational:
             self.z_mean = tf.keras.layers.Dense(latent_dim, name="z_mean")
@@ -102,14 +106,21 @@ class MultiHeadAutoEncoder(tf.keras.Model):
             self.sampling = Sampling()
 
         self.decoder = Decoder(36)
+        self.decoder.trainable = False
 
         self.classifier = Classifier(5, 2)
-        # lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-        #     5e-3, 250, 1.1, staircase=False, name=None
-        # )
-        #
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=5e-1)
+        self.classifier.trainable = not self.disable_classifier
 
+        if learning_rate:
+            self.optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        else:
+            self.optimizer = tf.keras.optimizers.Adam()
+        self.loss = MultiHeadLoss(self.tracker, disable_classifier=disable_classifier,
+                                  variational=variational, spheres={})
+
+        self.proximal = proximal
+        self.mu = mu
+        self.prev_weights = self.get_weights()
         # self.optimizer = tfa.optimizers.MultiOptimizer([
         #     (tf.keras.optimizers.Adam(learning_rate=encoder_lr), self.encoder),
         #     (tf.keras.optimizers.Adam(learning_rate=decoder_lr), self.decoder),
@@ -128,7 +139,7 @@ class MultiHeadAutoEncoder(tf.keras.Model):
         reconstructed = self.decoder(embedded[y_true == 0])
 
         n_benign, dim = reconstructed.shape
-        n_mal = len(y_true) - n_benign
+        n_mal = y_true.shape[0] - n_benign
 
         ben_mask = (y_true == 0)
         mal_mask = (y_true == 1)
@@ -149,6 +160,16 @@ class MultiHeadAutoEncoder(tf.keras.Model):
         if self.variational:
             out += [z_mean, z_log_var]
 
+        if self.proximal:
+            prox_loss = 0
+            for w, w_t in zip(self.get_weights(), self.prev_weights):
+                if not w.any():
+                    continue
+                prox_loss += tf.norm(w - w_t)
+            prox_loss *= 0.5 * self.mu
+            self.tracker.proximal.update_state(prox_loss)
+            self.add_loss(prox_loss)
+
         return tf.concat(out, axis=1)
 
     @property
@@ -156,9 +177,7 @@ class MultiHeadAutoEncoder(tf.keras.Model):
         return self.tracker.get_trackers()
 
     def compile(self):
-        loss = MultiHeadLoss(self.tracker, margin=3, disable_classifier=self.disable_classifier,
-                             variational=self.variational)
-        super().compile(optimizer=self.optimizer, loss=loss, run_eagerly=True)
+        super().compile(optimizer=self.optimizer, loss=self.loss, run_eagerly=True)
         self.predict(np.zeros((32, 36)))
 
     def predict(self, inputs):
@@ -176,33 +195,74 @@ class MultiHeadAutoEncoder(tf.keras.Model):
             embedded = self.sampling([z_mean, z_log_var])
         return embedded
 
+    def set_spheres(self, spheres):
+        self.loss.spheres = spheres
+
+    def set_local_spheres(self, spheres):
+        self.loss.local_spheres = spheres
+
+    def get_weights(self):
+        weights = super().get_weights()
+        if self.disable_classifier:
+            cls_layers = len(self.classifier.weights)
+            for i, w in enumerate(weights[-cls_layers:]):
+                weights[-cls_layers + i] = np.zeros_like(w)
+        return weights
+
+    def set_weights(self, weights):
+        super().set_weights(weights)
+        self.prev_weights = deepcopy(weights)
+
 
 class MetricsTracker:
-    def __init__(self, variational=False):
+    def __init__(self):
         self.total = tf.keras.metrics.Mean(name="total_loss")
         self.classification = tf.keras.metrics.Mean(name="classification_loss")
         self.reconstruction = tf.keras.metrics.Mean(name="reconstruction_loss")
-        self.variational = variational
-        if variational:
-            self.kl = tf.keras.metrics.Mean(name="kl_loss")
+        self.positive = tf.keras.metrics.Mean(name="positive_loss")
+        self.negative = tf.keras.metrics.Mean(name="negative_loss")
+        self.proximal = tf.keras.metrics.Mean(name='proximal_loss')
+        self.kl = tf.keras.metrics.Mean(name="kl_loss")
 
     def get_trackers(self) -> List['MetricsTracker']:
-        trackers = [self.total, self.classification, self.reconstruction]
-        if self.variational:
-            trackers.append(self.kl)
+        trackers = [self.total, self.classification, self.reconstruction, self.proximal, self.positive, self.negative,
+                    self.kl]
         return trackers
+
+    def __add__(self, other: 'MetricsTracker'):
+        self.total.merge_state([other.total])
+        self.classification.merge_state([other.classification])
+        self.reconstruction.merge_state([other.reconstruction])
+        self.positive.merge_state([other.positive])
+        self.negative.merge_state([other.negative])
+        self.proximal.merge_state([other.proximal])
+        self.kl.merge_state([other.kl])
+        return self
+
+    def serialize(self):
+        return serialize([tf.keras.metrics.serialize(tracker) for tracker in self.get_trackers()])
+
+    @staticmethod
+    def deserialize(state):
+        tracker = MetricsTracker()
+        state = [tf.keras.metrics.deserialize(s) for s in deserialize(state)]
+        tracker.total, tracker.classification, tracker.reconstruction,\
+        tracker.proximal, tracker.positive, tracker.negative, tracker.kl = state
+        return tracker
 
 
 class MultiHeadLoss(tf.keras.losses.Loss):
-    def __init__(self, tracker: MetricsTracker, margin=1.0, dim=36, variational=False, disable_classifier=False):
+    def __init__(self, tracker: MetricsTracker, dim=36, variational=False, disable_classifier=False, spheres=None):
         super().__init__()
         self.dim = dim
-        self.margin = margin
         self.bce = tf.keras.losses.BinaryCrossentropy()
         self.mce = tf.keras.losses.MeanSquaredError()
         self.tracker = tracker
         self.variational = variational
         self.disable_classifier = disable_classifier
+        self.spheres = spheres if spheres is not None else {}
+        self.local_spheres = None
+        self._epsilon = 1e-9
 
     def call(self, inputs_true, inputs_pred):
         """
@@ -225,16 +285,26 @@ class MultiHeadLoss(tf.keras.losses.Loss):
         label_true = inputs_true[:, -1]
         label_pred = inputs_pred[:, -1]
 
+        embedded = inputs_pred[:, self.dim:] if self.disable_classifier else inputs_pred[:, self.dim:-1]
+        #
+        # if self.spheres:
+        #     positive_loss = self.compute_positive_loss(embedded, label_true) / 1000
+        #     negative_loss = self.compute_negative_loss(embedded, label_true)
+        #     self.tracker.positive.update_state(positive_loss)
+        #     self.tracker.negative.update_state(negative_loss)
+        #     total_loss += positive_loss + negative_loss
+
         reconstructed_true = inputs_true[:, :self.dim]
         reconstructed_pred = inputs_pred[:, :self.dim]
 
         reconstructed_true_ben = tf.boolean_mask(reconstructed_true, label_true == 0, axis=0)
         reconstructed_pred_ben = tf.boolean_mask(reconstructed_pred, label_true == 0, axis=0)
 
-        if not self.disable_classifier:
-            cross_entropy_loss = self.bce(label_true, label_pred)
-            self.tracker.classification.update_state(cross_entropy_loss)
-            total_loss += cross_entropy_loss
+        cross_entropy_loss = self.bce(label_true, label_pred) if not self.disable_classifier else 0.0
+        if tf.math.is_nan(cross_entropy_loss):
+            cross_entropy_loss = self._epsilon
+        self.tracker.classification.update_state(cross_entropy_loss)
+        total_loss += cross_entropy_loss
 
         reconstruction_loss = self.mce(reconstructed_true_ben, reconstructed_pred_ben)
         self.tracker.reconstruction.update_state(reconstruction_loss)
@@ -244,18 +314,49 @@ class MultiHeadLoss(tf.keras.losses.Loss):
 
         return total_loss
 
+    def compute_positive_loss(self, embedding, y):
+        if not self.local_spheres:
+            return 0
+        loss_acc = 0
+        # for client in self.spheres.values():
+        for cls, (center, radius) in self.local_spheres.items():  # client.items():
+            x = embedding[y == cls]
+            safe_norm = tf.sqrt(
+                tf.reduce_sum(tf.square(x - center), axis=1) + self._epsilon
+            )
+            dist = safe_norm  # tf.norm(x - center, ord='euclidean', axis=1)
+            # dist = tf.clip_by_value(dist, 0, tf.float32.max)
+            loss_acc += tf.math.reduce_sum(dist)
+        return loss_acc
+
+    def compute_negative_loss(self, embedding, y):
+        loss_acc = 0
+        for client in self.spheres.values():
+            for cls, (center, radius) in client.items():
+                x_neg = embedding[y != cls]
+
+                safe_norm = tf.sqrt(
+                    tf.reduce_sum(tf.square(x_neg - center), axis=1) + self._epsilon
+                )
+                dist = radius - safe_norm  # tf.norm(x_neg - center, ord='euclidean', axis=1)
+                dist = tf.clip_by_value(dist, 0, tf.float32.max)
+                # dist = tf.math.square(dist)
+
+                loss_acc += tf.math.reduce_sum(dist)
+        return loss_acc
+
 
 class Classifier(tf.keras.layers.Layer):
-    def __init__(self, in_dim=10, n_classes=2, dropout=0.0):
+    def __init__(self, in_dim=10, n_classes=2, dropout=0.3):
         super().__init__()
-        # self.cl1 = tf.keras.layers.Dense(in_dim, name='DenseCls1', activation='sigmoid')
-        # self.drop = tf.keras.layers.Dropout(dropout, name='ClsDroupout')
+        self.cl1 = tf.keras.layers.Dense(in_dim, name='DenseCls1', activation='elu')
+        self.drop = tf.keras.layers.Dropout(dropout, name='ClsDroupout')
         self.cl2 = tf.keras.layers.Dense(n_classes if n_classes != 2 else 1, name='DenseCls2', activation='sigmoid')
 
     def call(self, X):
         X_prime = X
-        # X_prime = self.cl1(X)
-        # X_prime = self.drop(X_prime)
+        X_prime = self.cl1(X_prime)
+        X_prime = self.drop(X_prime)
         X_prime = self.cl2(X_prime)
         return X_prime
 

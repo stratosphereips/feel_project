@@ -47,7 +47,7 @@ def main(day: int, seed: int, model_path: str, data_dir: str):
     day = day
 
     tf.keras.utils.set_random_seed(seed)
-    model = MultiHeadAutoEncoder(encoder_lr=1e-1, decoder_lr=1e-1, classifier_lr=1e-3)
+    model = MultiHeadAutoEncoder(learning_rate=1e-3)
     model.compile()
     #get_classification_model(Path(model_path), 2, encoder_lr=1e-4, classifier_lr=1e-4)
     X_train, X_val, X_test, y_train, y_val, y_test = create_dataset(day, Path(data_dir), seed)
@@ -59,12 +59,13 @@ def main(day: int, seed: int, model_path: str, data_dir: str):
     X_train, X_val, X_test = scaler.transform(X_train), scaler.transform(X_val), scaler.transform(X_test)
 
 
-    log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
 
     X_train = np.concatenate([X_train, y_train.reshape(-1, 1)], axis=1).astype('float32')
     X_val = np.concatenate([X_val, y_val.reshape(-1, 1)], axis=1).astype('float32')
     #X_test = np.concatenate([X_test, y_test.reshape(-1, 1)], axis=1)
+
+    logs_dir = Path(f"../logs/fit/centralized") / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=logs_dir, histogram_freq=1)
 
     model.fit(
         x=X_train, y=X_train,

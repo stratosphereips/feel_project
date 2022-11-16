@@ -5,14 +5,22 @@ import pickle
 from sklearn.base import BaseEstimator, TransformerMixin
 import umap
 from matplotlib import pyplot as plt
+from datetime import datetime
 
 
-def get_threshold(X, mse):
+def get_threshold(X, mse, level=0.01):
     num = max(0.01 * len(X), 2)
-
-    th = 0.0001
-    while (sum(mse > th) > num):
-        th += 0.0001
+    lb = 0
+    ub = 1e5
+    th = (ub - lb) / 2
+    while ub - lb > 1e-9:
+        if (mse > th).sum() > num:
+            lb = th
+        elif (mse > th).sum() < num:
+            ub = th
+        else:
+            break
+        th = lb + ((ub - lb) / 2)
     return th
 
 
@@ -94,7 +102,7 @@ client_malware_map.update(
         1: 'CTU-Malware-Capture-Botnet-67-1',
         2: 'CTU-Malware-Capture-Botnet-219-2',
         3: 'CTU-Malware-Capture-Botnet-230-1',
-        4: 'CTU-Malware-Capture-Botnet-227-2',
+        4: 'CTU-Malware-Capture-Botnet-327-2',
         5: 'CTU-Malware-Capture-Botnet-346-1'
     }
 )
@@ -145,17 +153,33 @@ def pprint_cm(cm, labels, hide_zeroes=False, hide_diagonal=False, hide_threshold
 def plot_embedding(X, y, model):
     dim_red = umap.UMAP()
     encoded = model.embed(X)
+    X_ = np.concatenate([X, y.reshape(-1, 1)], axis=1).astype('float32')
+    model.evaluate(X_, X_)
     print(encoded.shape)
-    embedded = dim_red.fit_transform(encoded)
+    print(encoded)
+
     labels = ['Benign', 'Malicious']
     fig = plt.figure(figsize=(10, 7))
     ax = fig.add_subplot()  # (projection='3d')
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22',
               '#17becf']
+
+    if encoded.shape[1] > 2:
+        embedded = dim_red.fit_transform(encoded)
+    else:
+        embedded = encoded.numpy()
+        spheres = model.loss.spheres
+        for client in spheres.values():
+            for cls, (center, radius) in client.items():
+                circle = plt.Circle(center, radius, color=colors[int(cls)], alpha=0.2)
+                ax.add_patch(circle)
+
+
+
     for cls in sorted(set(y.astype('int'))):
         ax.scatter(embedded[y == cls, 0], embedded[y == cls, 1], c=colors[cls], label=labels[cls],
                    alpha=1 if cls == 0 else 1)
     ax.legend()
     plt.title("Embedding by the vanilla Auto Encoder mapped by UMAP")
-    plt.savefig('embedding_vanilla_ae.png')
+    plt.savefig(f'embedding_{datetime.now().strftime("%Y-%m-%d:%H:%M:%S")}.png')
     plt.show()

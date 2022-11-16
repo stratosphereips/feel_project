@@ -1,32 +1,43 @@
-import warnings
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+import warnings
 warnings.filterwarnings('ignore')
 
-from typing import Dict, Optional, Tuple, List
+from functools import reduce
+
+from flwr.common import FitRes, Parameters, Scalar, NDArrays, parameters_to_ndarrays, ndarrays_to_parameters
+from flwr.server.client_proxy import ClientProxy
+
+
+from typing import Dict, Optional, Tuple, List, Union
 
 import flwr as fl
-import tensorflow as tf
 import numpy as np
 from pathlib import Path
 from fire import Fire
 
 from common.utils import serialize_array, deserialize_string, client_malware_map, scale_data, MinMaxScaler, serialize, \
     deserialize, pprint_cm, plot_embedding
-from common.models import get_classification_model, MultiHeadAutoEncoder
+from common.models import get_classification_model, MultiHeadAutoEncoder, MetricsTracker
 from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset
 import pickle
 import pandas as pd
 from sklearn.metrics import classification_report
-import argparse
-import os
-
-global_model = None
+import tensorflow as tf
+from tensorflow.keras.metrics import Metric
 
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
-    def __init__(self, **kwds):
+    def __init__(self, model, **kwds):
+        self.model = model
+        kwds['on_fit_config_fn'] = self.fit_config
+        kwds['on_evaluate_config_fn'] = self.evaluate_config
         super().__init__(**kwds)
         self.prev_median_loss = np.inf
+        self.proxy_spheres = {}
+        self.scaler = None
+        self.epoch = 0
 
     def aggregate_fit(
             self,
@@ -37,12 +48,13 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         results = [result for result in results if result[1].num_examples]
         results = sorted(results, key=lambda result: result[1].metrics['id'])
         if server_round == 1:
-            scaler = sum((MinMaxScaler.load(r.metrics['scaler']) for _, r in results), start=MinMaxScaler())
+            self.scaler = sum((MinMaxScaler.load(r.metrics['scaler']) for _, r in results), start=MinMaxScaler())
             with open('round-1-scaler.pckl', 'wb') as fb:
-                pickle.dump(scaler, fb)
+                pickle.dump(self.scaler, fb)
 
         classification_losses = np.array([r.metrics['val_classification_loss'] for _, r in results])
         reconstruction_losses = np.array([r.metrics['val_reconstruction_loss'] for _, r in results])
+        prox_losses = np.array([r.metrics['val_prox_loss'] for _, r in results])
         print(f'\nClassification losses after round {server_round}: \n{classification_losses}\n'
               f'median: {np.median(classification_losses)}\t '
               f'max is client {np.argmax(classification_losses)}: {np.max(classification_losses)}\n')
@@ -51,28 +63,134 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
               f'median: {np.median(reconstruction_losses)}\t '
               f'max is client {np.argmax(reconstruction_losses)}: {np.max(reconstruction_losses)}\n')
 
-        total_losses = np.array([r.metrics['val_loss'] for _, r in results])
-        threshold = np.median(total_losses) * 100
-        print(f'Not aggregating results of {(total_losses > threshold).nonzero()} clients, because they are diverging')
-        results = [(proxy, r) for proxy, r in results if r.metrics['val_loss'] < threshold]
+        print(f'\nProximal losses after round {server_round}: \n{prox_losses}\n'
+              f'median: {np.median(prox_losses)}\t '
+              f'max is client {np.argmax(prox_losses)}: {np.max(prox_losses)}\n')
 
-        threshold_previous = self.prev_median_loss * 100
-        print(f'Not aggregating results of {(total_losses > threshold_previous).nonzero()} clients, '
-              f'because they values diverge form last round too much\n\n')
-        results = [(proxy, r) for proxy, r in results if r.metrics['val_loss'] < threshold_previous]
-        self.prev_median_loss = min(
-            self.prev_median_loss,
-            np.median(np.array([r.metrics['val_loss'] for _, r in results]))
-        )
+        # tracker = sum((MetricsTracker.deserialize(r.metrics['tracker']) for _, r in results), MetricsTracker())
+        # for t in tracker.get_trackers():
+        #     print(f"{t.name}: {t.result().numpy()}")
 
+        #
+        # total_losses = np.array([r.metrics['val_loss'] for _, r in results])
+        # threshold = np.median(total_losses) * 100
+        # print(f'Not aggregating results of {(total_losses > threshold).nonzero()} clients, because they are diverging')
+        # results = [(proxy, r) for proxy, r in results if r.metrics['val_loss'] < threshold]
+        #
+        # threshold_previous = self.prev_median_loss * 100
+        # print(f'Not aggregating results of {(total_losses > threshold_previous).nonzero()} clients, '
+        #       f'because they values diverge form last round too much\n\n')
+        # results = [(proxy, r) for proxy, r in results if r.metrics['val_loss'] < threshold_previous]
+        # self.prev_median_loss = min(
+        #     self.prev_median_loss,
+        #     np.median(np.array([r.metrics['val_loss'] for _, r in results]))
+        # )
+
+        self.proxy_spheres = {r.metrics['id']: deserialize(r.metrics['proxy_spheres']) for _, r in results}
+        self.model.set_spheres(self.proxy_spheres)
         print(f'Aggregating {len(results)} results')
-        aggregated_weights = super().aggregate_fit(server_round, results, failures)
+        aggregated_weights = self._aggregate_fit(server_round, results, failures)
         if aggregated_weights is not None and server_round == 9:
             # Save aggregated_weights on the final round
             print(f"[*] Saving round {server_round} aggregated_weights...")
             np.savez(f"model-weights.npz", *aggregated_weights)
 
+        self.epoch += 1
+
         return aggregated_weights
+
+    def _aggregate_fit(self, server_round: int,
+                       results: List[Tuple[ClientProxy, FitRes]],
+                       failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
+                       ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        fedavg_parameters_aggregated, metrics_aggregated = self._aggregate_weights(
+            server_round=server_round, results=results, failures=failures
+        )
+        if fedavg_parameters_aggregated is None:
+            return None, {}
+
+        fedavg_weights_aggregate = parameters_to_ndarrays(fedavg_parameters_aggregated)
+
+        # Adam
+        delta_t: NDArrays = [
+            x - y for x, y in zip(fedavg_weights_aggregate, self.current_weights)
+        ]
+
+        # m_t
+        if not self.m_t:
+            self.m_t = [np.zeros_like(x) for x in delta_t]
+        self.m_t = [
+            np.multiply(self.beta_1, x) + (1 - self.beta_1) * y
+            for x, y in zip(self.m_t, delta_t)
+        ]
+
+        # v_t
+        if not self.v_t:
+            self.v_t = [np.zeros_like(x) for x in delta_t]
+        self.v_t = [
+            self.beta_2 * x + (1 - self.beta_2) * np.multiply(y, y)
+            for x, y in zip(self.v_t, delta_t)
+        ]
+
+        new_weights = [
+            x + self.eta * y / (np.sqrt(z) + self.tau)
+            for x, y, z in zip(self.current_weights, self.m_t, self.v_t)
+        ]
+
+        self.current_weights = new_weights
+
+        return ndarrays_to_parameters(self.current_weights), metrics_aggregated
+
+    def _aggregate_weights(
+            self,
+            server_round: int,
+            results: List[Tuple[ClientProxy, FitRes]],
+            failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
+    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        """Aggregate fit results using weighted average."""
+        if not results:
+            return None, {}
+        # Do not aggregate if there are failures and failures are not accepted
+        if not self.accept_failures and failures:
+            return None, {}
+
+        # Convert results
+        weights_results = [
+            (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples)
+            for _, fit_res in results
+        ]
+        parameters_aggregated = ndarrays_to_parameters(self._aggregate(weights_results))
+
+        # Aggregate custom metrics if aggregation fn was provided
+        metrics_aggregated = {}
+        if self.fit_metrics_aggregation_fn:
+            fit_metrics = [(res.num_examples, res.metrics) for _, res in results]
+            metrics_aggregated = self.fit_metrics_aggregation_fn(fit_metrics)
+
+        return parameters_aggregated, metrics_aggregated
+
+    @staticmethod
+    def _aggregate(results: List[Tuple[NDArrays, int]]) -> NDArrays:
+        """Compute weighted average."""
+        # Calculate the total number of examples used during training
+        num_examples_total = sum([num_examples for _, num_examples in results])
+
+        per_layer_examples = [
+            [num_examples if layer.any() else 0 for layer in layers]
+            for layers, num_examples in results
+        ]
+        layer_examples = [sum(examples) for examples in zip(*per_layer_examples)]
+        # Create a list of weights, each multiplied by the related number of examples
+        weighted_weights = [
+            [layer * num_examples for layer in weights] for weights, num_examples in results
+        ]
+
+        # Compute average weights of each layer
+        weights_prime: NDArrays = [
+            reduce(np.add, layer_updates) / num_examples_total
+            for layer_examples, *layer_updates in zip(layer_examples, *weighted_weights)
+        ]
+        return weights_prime
 
     def aggregate_evaluate(
             self,
@@ -85,46 +203,116 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             return None
 
         results = [result for result in results if result[1].num_examples]
+        print("============================\n   Classification Results   \n============================")
+        cls_fp = np.sum([r.metrics["cls_fp"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} total number of ben. anomalies from client results: {int(cls_fp)}")
 
-        anomalies_ben = np.sum([r.metrics["anomalies_ben"] for _, r in results if r != None])
-        print(f"[*] Round {server_round} total number of ben. anomalies from client results: {int(anomalies_ben)}")
-
-        anomalies_mal = np.mean([np.sum(r.metrics["anomalies_mal"]) for _, r in results if r != None])
-        print(f"[*] Round {server_round} total number of mal. anomalies from client results: {int(anomalies_mal)}")
+        cls_tp = np.sum([r.metrics["cls_tp"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} total number of mal. anomalies from client results: {int(cls_tp)}")
 
         # Weigh accuracy of each client by number of examples used
-        accuracies = [r.metrics["accuracy"] * r.num_examples for _, r in results if r != None]
+        accuracies = [r.metrics["class_accuracy"] * r.num_examples for _, r in results if r != None]
         examples = [r.num_examples for _, r in results if r != None]
 
         # Aggregate and print custom metric
         accuracy_aggregated = 100 * sum(accuracies) / sum(examples)
         print(f"[*] Round {server_round} accuracy weighted avg from client results: {accuracy_aggregated:.2f}%")
 
-        accuracies = np.mean([r.metrics["accuracy"] for _, r in results if r != None])
+        accuracies = np.mean([r.metrics["class_accuracy"] for _, r in results if r != None])
         print(f"[*] Round {server_round} accuracy avg from client results: {100 * accuracies:.2f}%")
 
         # Weigh TPR of each client by number of examples used
-        tprs = [r.metrics["tpr"] * r.num_examples for _, r in results if r != None]
+        cls_tprs = np.array([r.metrics["cls_tpr"] * r.num_examples for _, r in results if r != None])
+        cls_tprs = cls_tprs[~np.isnan(cls_tprs)]
         # Aggregate and print custom metric
-        tpr_aggregated = 100 * sum(tprs) / sum(examples)
-        print(f"[*] Round {server_round} TPR weighted avg from client results: {tpr_aggregated:.2f}%")
-        tprs = np.mean([r.metrics["tpr"] for _, r in results if r != None])
-        print(f"[*] Round {server_round} TPR avg from client results: {100 * tprs:.2f}%")
+        cls_tpr_aggregated = 100 * sum(cls_tprs) / sum(examples)
+        print(f"[*] Round {server_round} TPR weighted avg from client results: {cls_tpr_aggregated:.2f}%")
+        cls_tprs = np.mean([r.metrics["cls_tpr"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} TPR avg from client results: {100 * cls_tprs:.2f}%")
 
         # Weigh FPR of each client by number of examples used
-        fprs = [(1 - r.metrics["fpr"]) * r.num_examples for _, r in results if r != None]
+        cls_fprs = np.array([(1 - r.metrics["cls_fpr"]) * r.num_examples for _, r in results if r != None])
+        cls_fprs = cls_fprs[~np.isnan(cls_fprs)]
         # Aggregate and print custom metric
-        fpr_aggregated = 100 * sum(fprs) / sum(examples)
-        print(f"[*] Round {server_round} FPR weighted avg from client results: {fpr_aggregated:.2f}%")
-        fprs = np.mean([1 - r.metrics["fpr"] for _, r in results if r != None])
-        print(f"[*] Round {server_round} FPR avg from client results: {100 * fprs:.2f}%")
+        cls_fpr_aggregated = 100 * sum(cls_fprs) / sum(examples)
+        print(f"[*] Round {server_round} FPR weighted avg from client results: {cls_fpr_aggregated:.2f}%")
+        cls_fprs = np.mean([1 - r.metrics["cls_fpr"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} FPR avg from client results: {100 * cls_fprs:.2f}%")
 
         conf_matrices = np.array([deserialize(result.metrics['confusion_matrix']) for _, result in results])
         conf_matrix = conf_matrices.sum(axis=0)
         pprint_cm(conf_matrix, ['Benign', 'Malicious'])
 
+        print("===============================\n   Anomaly detection Results   \n===============================")
+        ad_fp = np.sum([r.metrics["ad_fp"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} total number of ben. anomalies from client results: {int(ad_fp)}")
+
+        ad_tp = np.sum([r.metrics["ad_tp"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} total number of mal. anomalies from client results: {int(ad_tp)}")
+
+        # Weigh accuracy of each client by number of examples used
+        accuracies = [r.metrics["class_accuracy"] * r.num_examples for _, r in results if r != None]
+        examples = [r.num_examples for _, r in results if r != None]
+
+        # Aggregate and print custom metric
+        accuracy_aggregated = 100 * sum(accuracies) / sum(examples)
+        print(f"[*] Round {server_round} accuracy weighted avg from client results: {accuracy_aggregated:.2f}%")
+
+        accuracies = np.mean([r.metrics["class_accuracy"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} accuracy avg from client results: {100 * accuracies:.2f}%")
+
+        # Weigh TPR of each client by number of examples used
+        ad_tprs = np.array([r.metrics["ad_tpr"] * r.num_examples for _, r in results if r != None])
+        ad_tprs = ad_tprs[~np.isnan(ad_tprs)]
+        # Aggregate and print custom metric
+        ad_tpr_aggregated = 100 * sum(ad_tprs) / sum(examples)
+        print(f"[*] Round {server_round} TPR weighted avg from client results: {ad_tpr_aggregated:.2f}%")
+        ad_tprs = np.mean([r.metrics["ad_tpr"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} TPR avg from client results: {100 * ad_tprs:.2f}%")
+
+        # Weigh FPR of each client by number of examples used
+        ad_fprs = np.array([(1 - r.metrics["ad_fpr"]) * r.num_examples for _, r in results if r != None])
+        ad_fprs = ad_fprs[~np.isnan(ad_fprs)]
+        # Aggregate and print custom metric
+        ad_fpr_aggregated = 100 * sum(ad_fprs) / sum(examples)
+        print(f"[*] Round {server_round} FPR weighted avg from client results: {ad_fpr_aggregated:.2f}%")
+        ad_fprs = np.mean([1 - r.metrics["cls_fpr"] for _, r in results if r != None])
+        print(f"[*] Round {server_round} FPR avg from client results: {100 * ad_fprs:.2f}%")
+
         # Call aggregate_evaluate from base class (FedAvg)
         return super().aggregate_evaluate(server_round, results, failures)
+
+    def fit_config(self, rnd: int):
+        """Return training configuration dict for each round.
+        Keep batch size fixed at 32, perform two rounds of training with one
+        local epoch, increase to two local epochs afterwards.
+        """
+        mal_data = load_mal_data(5, Path('../data'))["CTU-Malware-Capture-Botnet-67-1"]
+        config = {
+            "start_epoch": self.epoch,
+            "batch_size": 32,
+            "local_epochs": 1,  # 1 if rnd < 2 else 2,
+            "neg_dataset": serialize(mal_data),
+            "proxy_spheres": serialize(self.proxy_spheres)
+        }
+        return config
+
+    def evaluate_config(self, rnd: int):
+        """Return evaluation configuration dict for each round.
+        Perform five local evaluation steps on each client (i.e., use five
+        batches) during rounds one to three, then increase to ten local
+        evaluation steps.
+        """
+        config = {
+            "val_steps": 64,
+            "proxy_spheres": serialize(self.proxy_spheres)
+        }
+        if rnd > 1:
+            with open('round-1-scaler.pckl', 'rb') as f:
+                scaler = pickle.load(f)
+                config['scaler'] = scaler.dump()
+
+        return config
 
 
 def main(day: int, model_path: str, seed: int = 8181, data_dir: str = '../data', num_clients: int = 3) -> None:
@@ -147,28 +335,26 @@ def main(day: int, model_path: str, seed: int = 8181, data_dir: str = '../data',
     model = MultiHeadAutoEncoder()
     model.compile()
     model.predict(np.zeros((16, 36)))
-    num_rounds = 50
-
+    num_rounds = 25
     print(f"{num_clients=}")
 
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
+        model=model,
         fraction_fit=1.0,
         fraction_evaluate=1.0,
         min_fit_clients=num_clients,
         min_evaluate_clients=num_clients,
         min_available_clients=num_clients,
-        evaluate_fn=get_eval_fn(model, day, Path(data_dir)),
-        on_fit_config_fn=fit_config,
-        on_evaluate_config_fn=evaluate_config,
+        evaluate_fn=get_eval_fn(model, day, Path(data_dir), seed),
         initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),
-        eta=5e-1
+        eta=1e-2
     )
 
     # Start Flower server (SSL-enabled) for n rounds of federated learning
     fl.server.start_server(
         server_address="0.0.0.0:8000",
-        config=fl.server.ServerConfig(num_rounds=num_rounds, round_timeout=30.0),
+        config=fl.server.ServerConfig(num_rounds=num_rounds, round_timeout=90.0),
         strategy=strategy,
         # certificates=(
         #    Path(".cache/certificates/ca.crt").read_bytes(),
@@ -177,20 +363,25 @@ def main(day: int, model_path: str, seed: int = 8181, data_dir: str = '../data',
         # ),
     )
 
-    X_test, y_test = load_data(data_dir, day)
+    X_test, y_test = load_data(data_dir, day, seed)
     with open(f'round-1-scaler.pckl', 'rb') as f:
         scaler = pickle.load(f)
-    scaler.transform(X_test)
-    plot_embedding(X_test, y_test, global_model)
+    X_test = strategy.scaler.transform(X_test)
+    plot_embedding(X_test, y_test, model)
 
-    # model.save(f'day{day}_{seed}_model.h5')
-    tf.keras.models.save_model(global_model, f'models/day{day}_{seed}_model')
+    model.save_weights(f'day{day}_{seed}_model.h5')
+    spheres = model.loss.spheres
+    with open(f'day{day}_{seed}_spheres.h5', 'wb') as f:
+        pickle.dump(spheres, f)
+    with open(f'round-1-scaler.pckl', 'rb') as f:
+        scaler = pickle.load(f)
+    #tf.keras.models.save_model(model, f'models/day{day}_{seed}_model')
 
 
-def get_eval_fn(model, day, data_dir):
+def get_eval_fn(model, day, data_dir, seed):
     """Return an evaluation function for server-side evaluation."""
 
-    X_test, y_test = load_data(data_dir, day)
+    X_test, y_test = load_data(data_dir, day, seed)
 
     # The `evaluate` function will be called after every round
     def evaluate(
@@ -199,9 +390,6 @@ def get_eval_fn(model, day, data_dir):
             config: Dict[str, fl.common.Scalar]
     ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
         model.set_weights(parameters)  # Update model with the latest parameters
-
-        global global_model
-        global_model = model
 
         # Read the stored per-feature maximums and minimums
         if server_round > 1:
@@ -229,51 +417,27 @@ def get_eval_fn(model, day, data_dir):
     return evaluate
 
 
-def load_data(data_dir, day):
+def load_data(data_dir, day, seed):
     # Load data and model here to avoid the overhead of doing it in `evaluate` itself
     # X_train = pd.DataFrame()
-    X_test_ben = pd.DataFrame()
-    X_test_mal = pd.DataFrame()
-    for client_id in range(1, 11):
-        _, test_temp = load_ben_data(day, client_id, data_dir, drop_labels=False)
-        mal_temp = load_mal_data(day + 1, data_dir, drop_labels=False)[client_malware_map[client_id]]
-        # X_train = pd.concat([X_train, train_temp], ignore_index=True)
-        X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
-        X_test_mal = pd.concat([X_test_mal, mal_temp], ignore_index=True)
-    X_test, _, y_test, _ = create_supervised_dataset(X_test_ben, X_test_mal, 0.0)
+    # X_test_ben = pd.DataFrame()
+    # X_test_mal = pd.DataFrame()
+    # for client_id in range(1, 11):
+    #     _, test_temp = load_ben_data(day, client_id, data_dir, drop_labels=False)
+    #     mal_temp = load_mal_data(day + 1, data_dir, drop_labels=False)[client_malware_map[client_id]]
+    #     # X_train = pd.concat([X_train, train_temp], ignore_index=True)
+    #     X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
+    #     X_test_mal = pd.concat([X_test_mal, mal_temp], ignore_index=True)
+    # X_test, _, y_test, _ = create_supervised_dataset(X_test_ben, X_test_mal, 0.0)
+
+    ben_train, ben_test = zip(
+        *[load_ben_data(day, client, data_dir, drop_labels=False, drop_four_tuple=True) for client in
+          range(1, 10)])
+    X_ben_test = pd.concat(ben_test, axis=0)
+    X_mal_test = pd.concat(load_mal_data(day + 1, data_dir, drop_labels=False, drop_four_tuple=True).values(), axis=0)
+    X_test, _, y_test, _ = create_supervised_dataset(X_ben_test, X_mal_test, 0.0, seed)
 
     return X_test, y_test
-
-
-def fit_config(rnd: int):
-    """Return training configuration dict for each round.
-    Keep batch size fixed at 32, perform two rounds of training with one
-    local epoch, increase to two local epochs afterwards.
-    """
-    mal_data = load_mal_data(5, Path('../data'))["CTU-Malware-Capture-Botnet-67-1"]
-    config = {
-        "batch_size": 16,
-        "local_epochs": 1,  # 1 if rnd < 2 else 2,
-        "neg_dataset": serialize(mal_data)
-    }
-    return config
-
-
-def evaluate_config(rnd: int):
-    """Return evaluation configuration dict for each round.
-    Perform five local evaluation steps on each client (i.e., use five
-    batches) during rounds one to three, then increase to ten local
-    evaluation steps.
-    """
-    config = {
-        "val_steps": 10
-    }
-    if rnd > 1:
-        with open('round-1-scaler.pckl', 'rb') as f:
-            scaler = pickle.load(f)
-            config['scaler'] = scaler.dump()
-
-    return config
 
 
 if __name__ == "__main__":
