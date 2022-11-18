@@ -1,14 +1,19 @@
+import inspect
 import os
+import types
+
+from common.CustomFedAdam import CustomFedAdam
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import warnings
+
 warnings.filterwarnings('ignore')
 
 from functools import reduce
 
 from flwr.common import FitRes, Parameters, Scalar, NDArrays, parameters_to_ndarrays, ndarrays_to_parameters
 from flwr.server.client_proxy import ClientProxy
-
 
 from typing import Dict, Optional, Tuple, List, Union
 
@@ -28,7 +33,7 @@ import tensorflow as tf
 from tensorflow.keras.metrics import Metric
 
 
-class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
+class AggregateCustomMetricStrategy(CustomFedAdam):
     def __init__(self, model, **kwds):
         self.model = model
         kwds['on_fit_config_fn'] = self.fit_config
@@ -38,6 +43,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         self.proxy_spheres = {}
         self.scaler = None
         self.epoch = 0
+        self.threshold = 100
 
     def aggregate_fit(
             self,
@@ -86,10 +92,19 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         #     np.median(np.array([r.metrics['val_loss'] for _, r in results]))
         # )
 
+        ths = [r.metrics["threshold"] * r.num_examples for _, r in results if r != None]
+        examples = [r.num_examples for _, r in results if r != None]
+
+        # # Aggregate and print custom metric
+        weighted_th = sum(ths) / sum(examples)
+        print(f"[*] Round {server_round} threshold weighted avg from client results: {weighted_th:.5f}")
+
+        self.threshold = weighted_th
+
         self.proxy_spheres = {r.metrics['id']: deserialize(r.metrics['proxy_spheres']) for _, r in results}
         self.model.set_spheres(self.proxy_spheres)
         print(f'Aggregating {len(results)} results')
-        aggregated_weights = self._aggregate_fit(server_round, results, failures)
+        aggregated_weights = super().aggregate_fit(server_round, results, failures)
         if aggregated_weights is not None and server_round == 9:
             # Save aggregated_weights on the final round
             print(f"[*] Saving round {server_round} aggregated_weights...")
@@ -98,99 +113,6 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         self.epoch += 1
 
         return aggregated_weights
-
-    def _aggregate_fit(self, server_round: int,
-                       results: List[Tuple[ClientProxy, FitRes]],
-                       failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
-                       ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
-        fedavg_parameters_aggregated, metrics_aggregated = self._aggregate_weights(
-            server_round=server_round, results=results, failures=failures
-        )
-        if fedavg_parameters_aggregated is None:
-            return None, {}
-
-        fedavg_weights_aggregate = parameters_to_ndarrays(fedavg_parameters_aggregated)
-
-        # Adam
-        delta_t: NDArrays = [
-            x - y for x, y in zip(fedavg_weights_aggregate, self.current_weights)
-        ]
-
-        # m_t
-        if not self.m_t:
-            self.m_t = [np.zeros_like(x) for x in delta_t]
-        self.m_t = [
-            np.multiply(self.beta_1, x) + (1 - self.beta_1) * y
-            for x, y in zip(self.m_t, delta_t)
-        ]
-
-        # v_t
-        if not self.v_t:
-            self.v_t = [np.zeros_like(x) for x in delta_t]
-        self.v_t = [
-            self.beta_2 * x + (1 - self.beta_2) * np.multiply(y, y)
-            for x, y in zip(self.v_t, delta_t)
-        ]
-
-        new_weights = [
-            x + self.eta * y / (np.sqrt(z) + self.tau)
-            for x, y, z in zip(self.current_weights, self.m_t, self.v_t)
-        ]
-
-        self.current_weights = new_weights
-
-        return ndarrays_to_parameters(self.current_weights), metrics_aggregated
-
-    def _aggregate_weights(
-            self,
-            server_round: int,
-            results: List[Tuple[ClientProxy, FitRes]],
-            failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
-    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
-        """Aggregate fit results using weighted average."""
-        if not results:
-            return None, {}
-        # Do not aggregate if there are failures and failures are not accepted
-        if not self.accept_failures and failures:
-            return None, {}
-
-        # Convert results
-        weights_results = [
-            (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples)
-            for _, fit_res in results
-        ]
-        parameters_aggregated = ndarrays_to_parameters(self._aggregate(weights_results))
-
-        # Aggregate custom metrics if aggregation fn was provided
-        metrics_aggregated = {}
-        if self.fit_metrics_aggregation_fn:
-            fit_metrics = [(res.num_examples, res.metrics) for _, res in results]
-            metrics_aggregated = self.fit_metrics_aggregation_fn(fit_metrics)
-
-        return parameters_aggregated, metrics_aggregated
-
-    @staticmethod
-    def _aggregate(results: List[Tuple[NDArrays, int]]) -> NDArrays:
-        """Compute weighted average."""
-        # Calculate the total number of examples used during training
-        num_examples_total = sum([num_examples for _, num_examples in results])
-
-        per_layer_examples = [
-            [num_examples if layer.any() else 0 for layer in layers]
-            for layers, num_examples in results
-        ]
-        layer_examples = [sum(examples) for examples in zip(*per_layer_examples)]
-        # Create a list of weights, each multiplied by the related number of examples
-        weighted_weights = [
-            [layer * num_examples for layer in weights] for weights, num_examples in results
-        ]
-
-        # Compute average weights of each layer
-        weights_prime: NDArrays = [
-            reduce(np.add, layer_updates) / num_examples_total
-            for layer_examples, *layer_updates in zip(layer_examples, *weighted_weights)
-        ]
-        return weights_prime
 
     def aggregate_evaluate(
             self,
@@ -305,6 +227,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         """
         config = {
             "val_steps": 64,
+            "threshold": self.threshold,
             "proxy_spheres": serialize(self.proxy_spheres)
         }
         if rnd > 1:
@@ -375,7 +298,6 @@ def main(day: int, model_path: str, seed: int = 8181, data_dir: str = '../data',
         pickle.dump(spheres, f)
     with open(f'round-1-scaler.pckl', 'rb') as f:
         scaler = pickle.load(f)
-    #tf.keras.models.save_model(model, f'models/day{day}_{seed}_model')
 
 
 def get_eval_fn(model, day, data_dir, seed):
@@ -398,21 +320,26 @@ def get_eval_fn(model, day, data_dir, seed):
         else:
             scaler = MinMaxScaler().from_min_max(-10 * np.ones(36), 10 * np.ones(36))
 
+        threshold = config['threshold']
+
         X_test_ = scaler.transform(X_test)
-        X = np.concatenate([X_test_, y_test.reshape(-1, 1)], axis=1).astype('float32')
 
         # Detect all the samples which are anomalies.
-        prediction_raw = model.predict(X_test_)
-        y_pred = (prediction_raw[:, -1] > 0.5).astype(float).T
-        bce = model.evaluate(X, X, 64, steps=None)
+        mse, y_pred, bce = model.eval(X_test_, y_test)
 
-        rec_mal = dict()
-        mse_mal = dict()
+        y_ad_pred = (mse > threshold).astype(float).T
 
-        report = classification_report(y_test, y_pred, output_dict=True)
+        ad_report = classification_report(y_test, y_ad_pred, output_dict=True, label=[0.0, 1.0],
+                                          target_names=['Benign', 'Malicious'])
+        supervised_report = classification_report(y_test, y_pred, output_dict=True, label=[0.0, 1.0],
+                                          target_names=['Benign', 'Malicious'])
+
+        report = {f'ad_{key}': val for key, val in ad_report.items()}.update(
+            {f'sup_{key}': val for key, val in supervised_report.items()}
+        )
         # Detect all the samples which are anomalies.
 
-        return bce, report
+        return bce + mse.sum(), report
 
     return evaluate
 
@@ -439,6 +366,66 @@ def load_data(data_dir, day, seed):
 
     return X_test, y_test
 
+
+def mergeFunctionMetadata(f, g):
+    """
+    Overwrite C{g}'s name and docstring with values from C{f}.  Update
+    C{g}'s instance dictionary with C{f}'s.
+    To use this function safely you must use the return value. In Python 2.3,
+    L{mergeFunctionMetadata} will create a new function. In later versions of
+    Python, C{g} will be mutated and returned.
+    @return: A function that has C{g}'s behavior and metadata merged from
+        C{f}.
+    """
+    try:
+        g.__name__ = f.__name__
+    except TypeError:
+        try:
+            merged = types.FunctionType(
+                g.func_code, g.func_globals,
+                f.__name__, inspect.getargspec(g)[-1],
+                g.func_closure)
+        except TypeError:
+            pass
+    else:
+        merged = g
+    try:
+        merged.__doc__ = f.__doc__
+    except (TypeError, AttributeError):
+        pass
+    try:
+        merged.__dict__.update(g.__dict__)
+        merged.__dict__.update(f.__dict__)
+    except (TypeError, AttributeError):
+        pass
+    merged.__module__ = f.__module__
+    return merged
+
+
+def custom_aggregate(results: List[Tuple[NDArrays, int]]) -> NDArrays:
+    """Compute weighted average."""
+    # Calculate the total number of examples used during training
+    num_examples_total = sum([num_examples for _, num_examples in results])
+
+    per_layer_examples = [
+        [num_examples if layer.any() else 0 for layer in layers]
+        for layers, num_examples in results
+    ]
+    layer_examples = [sum(examples) for examples in zip(*per_layer_examples)]
+    # Create a list of weights, each multiplied by the related number of examples
+    weighted_weights = [
+        [layer * num_examples for layer in weights] for weights, num_examples in results
+    ]
+
+    # Compute average weights of each layer
+    weights_prime: NDArrays = [
+        reduce(np.add, layer_updates) / num_examples_total
+        for layer_examples, *layer_updates in zip(layer_examples, *weighted_weights)
+    ]
+    return weights_prime
+
+
+mergeFunctionMetadata(custom_aggregate, fl.server.strategy.aggregate.aggregate)
 
 if __name__ == "__main__":
     Fire(main)

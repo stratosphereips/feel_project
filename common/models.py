@@ -8,8 +8,9 @@ from pathlib import Path
 import numpy as np
 from copy import deepcopy
 
+from common.config import Config
 from common.utils import deserialize, serialize
-
+from sklearn.metrics import mean_squared_error, log_loss
 
 def get_ad_model(dropout=0.2):
     model = tf.keras.Sequential(
@@ -91,16 +92,16 @@ class AutoEncoder(tf.keras.layers.Layer):
 
 
 class MultiHeadAutoEncoder(tf.keras.Model):
-    def __init__(self, learning_rate=None, disable_classifier=False,
-                 variational=False, proximal=False, mu=5):
+    def __init__(self, config: Config):
         super().__init__()
-        self.disable_classifier = disable_classifier
-        latent_dim = 10
-        self.variational = variational
+
+        self.disable_classifier = config.model.disable_classifier
+        latent_dim = config.model.latent_dim
+        self.variational = config.model.variational
         self.encoder = Encoder(latent_dim=latent_dim)
         self.tracker = MetricsTracker()
 
-        if variational:
+        if self.variational:
             self.z_mean = tf.keras.layers.Dense(latent_dim, name="z_mean")
             self.z_log_var = tf.keras.layers.Dense(latent_dim, name="z_log_var")
             self.sampling = Sampling()
@@ -108,18 +109,17 @@ class MultiHeadAutoEncoder(tf.keras.Model):
         self.decoder = Decoder(36)
         self.decoder.trainable = False
 
-        self.classifier = Classifier(5, 2)
+        self.classifier = Classifier(config.model.classifier_hidden, 2)
         self.classifier.trainable = not self.disable_classifier
 
-        if learning_rate:
-            self.optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
-        else:
-            self.optimizer = tf.keras.optimizers.Adam()
-        self.loss = MultiHeadLoss(self.tracker, disable_classifier=disable_classifier,
-                                  variational=variational, spheres={})
 
-        self.proximal = proximal
-        self.mu = mu
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate=config.model.learning_rate)
+
+        self.loss = MultiHeadLoss(self.tracker, disable_classifier=config.model.disable_classifier,
+                                  variational=config.model.variational, spheres={})
+
+        self.proximal = config.model.proximal
+        self.mu = config.model.mu
         self.prev_weights = self.get_weights()
         # self.optimizer = tfa.optimizers.MultiOptimizer([
         #     (tf.keras.optimizers.Adam(learning_rate=encoder_lr), self.encoder),
@@ -166,7 +166,7 @@ class MultiHeadAutoEncoder(tf.keras.Model):
                 if not w.any():
                     continue
                 prox_loss += tf.norm(w - w_t)
-            prox_loss *= 0.5 * self.mu
+            prox_loss *= self.mu
             self.tracker.proximal.update_state(prox_loss)
             self.add_loss(prox_loss)
 
@@ -178,6 +178,7 @@ class MultiHeadAutoEncoder(tf.keras.Model):
 
     def compile(self):
         super().compile(optimizer=self.optimizer, loss=self.loss, run_eagerly=True)
+        self.built = True
         self.predict(np.zeros((32, 36)))
 
     def predict(self, inputs):
@@ -212,6 +213,12 @@ class MultiHeadAutoEncoder(tf.keras.Model):
     def set_weights(self, weights):
         super().set_weights(weights)
         self.prev_weights = deepcopy(weights)
+
+    def eval(self, X, y_true):
+        predict = self.predict(X)
+        X_pred, y_pred = predict[:, :-1], predict[:, -1:]
+        mse = np.mean(np.power(X - X_pred, 2), axis=1)
+        return mse, y_pred, log_loss(y_true, y_pred)
 
 
 class MetricsTracker:
@@ -278,7 +285,7 @@ class MultiHeadLoss(tf.keras.losses.Loss):
             z_log_var = inputs_pred[:, -2:]
             inputs_pred = inputs_pred[:, :-4]
             kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
-            kl_loss = tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1)) * 10000
+            kl_loss = tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
             self.tracker.kl.update_state(kl_loss)
             total_loss += kl_loss
 

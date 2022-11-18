@@ -154,6 +154,7 @@ class ADClient(fl.client.NumPyClient):
 
         # Get config values
         steps: int = config["val_steps"]
+        self.threshold = config['threshold']
         if 'scaler' in config:
             self.scaler = MinMaxScaler.load(config["scaler"])
 
