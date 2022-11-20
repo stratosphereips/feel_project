@@ -8,17 +8,15 @@ from common.config import Config
 
 warnings.filterwarnings('ignore')
 
-import argparse
 from pathlib import Path
 
 import tensorflow as tf
 import numpy as np
 
 import flwr as fl
-from common.utils import get_threshold, serialize_array, deserialize_string, scale_data, MinMaxScaler, serialize, client_malware_map
+from common.utils import get_threshold, MinMaxScaler, serialize, client_malware_map
 from common.data_loading import load_mal_data, load_ben_data
-from common.models import get_ad_model, MultiHeadAutoEncoder
-from sklearn import preprocessing
+from common.models import MultiHeadAutoEncoder
 from sklearn.model_selection import train_test_split
 import os
 
@@ -59,8 +57,7 @@ class ADClient(fl.client.NumPyClient):
         self.model.set_weights(parameters)
 
         # Get hyperparameters for this round
-        print(config)
-        batch_size: int = config["batch_size"]
+        batch_size: int = self.config.batch_size
         start_epoch: int = config['start_epoch']
         epochs: int = config["local_epochs"]
 
@@ -88,7 +85,6 @@ class ADClient(fl.client.NumPyClient):
             self.model.set_weights(parameters)
 
         # Calculate the threshold based on the local validation data
-        X_val = X_val
         rec = self.model.predict(X_val)[:, :-1]
         mse = np.mean(np.power(X_val - rec, 2), axis=1)
         self.threshold = get_threshold(X_val, mse)

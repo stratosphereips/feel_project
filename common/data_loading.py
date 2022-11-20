@@ -32,15 +32,22 @@ def load_mal_data(day: int, data_dir: Path, drop_labels=True, drop_four_tuple=Tr
     return mal_data
 
 
+def load_day_dataset(dataset_dir: Path, drop_labels=True, drop_four_tuple=True):
+    if dataset_dir is not None:
+        return _load_data(dataset_dir, drop_labels, drop_four_tuple)
+    else:
+        return pd.DataFrame()
+
+
 def create_supervised_dataset(df_ben: pd.DataFrame, df_mal: pd.DataFrame, test_ratio=0.2, seed=None, resize_mal=False):
-    if resize_mal:
+    if resize_mal and df_mal.size > 0:
         resized_array = np.resize(df_mal.to_numpy(), (df_ben.shape[0], df_mal.shape[1]))
         df_mal = pd.DataFrame(resized_array, columns=df_mal.columns)
 
     df = pd.concat((df_ben, df_mal), axis=0)
 
-    y = (df.label == 'Malicious').astype('double').to_numpy()
-    X = df.drop(_label_cols, axis=1).to_numpy()
+    y = (df.label == 'Malicious').astype('double').to_numpy().astype('float32')
+    X = df.drop(_label_cols, axis=1).to_numpy().astype('float32')
 
     if not test_ratio:
         X, y = shuffle(X, y, random_state=seed)

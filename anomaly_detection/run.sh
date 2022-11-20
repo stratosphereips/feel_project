@@ -12,8 +12,8 @@ export PYTHONPATH="${PYTHONPATH}:${PROJECT_DIR}"
 # Clean the previous saved data if they exist
 rm *.npz
 
-#echo "Starting server for day ${day}, seed ${seed}, and ${num_clients} clients."
-#python server.py --day ${day} --num_fit_clients ${num_clients} --num_evaluate_clients ${num_clients} &
+echo "Starting server for day ${day}, seed ${seed}, and ${num_clients} clients."
+python server.py --day ${day} --num_fit_clients ${num_clients} --num_evaluate_clients ${num_clients} &
 
 sleep 3  # Sleep for 3s to give the server enough time to start
 

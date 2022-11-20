@@ -216,7 +216,7 @@ class MultiHeadAutoEncoder(tf.keras.Model):
 
     def eval(self, X, y_true):
         predict = self.predict(X)
-        X_pred, y_pred = predict[:, :-1], predict[:, -1:]
+        X_pred, y_pred = predict[:, :-1], predict[:, -1]
         mse = np.mean(np.power(X - X_pred, 2), axis=1)
         return mse, y_pred, log_loss(y_true, y_pred)
 
@@ -262,7 +262,7 @@ class MultiHeadLoss(tf.keras.losses.Loss):
     def __init__(self, tracker: MetricsTracker, dim=36, variational=False, disable_classifier=False, spheres=None):
         super().__init__()
         self.dim = dim
-        self.bce = tf.keras.losses.BinaryCrossentropy()
+        self.bce = tf.keras.losses.BinaryCrossentropy(from_logits=True)
         self.mce = tf.keras.losses.MeanSquaredError()
         self.tracker = tracker
         self.variational = variational
@@ -358,7 +358,7 @@ class Classifier(tf.keras.layers.Layer):
         super().__init__()
         self.cl1 = tf.keras.layers.Dense(in_dim, name='DenseCls1', activation='elu')
         self.drop = tf.keras.layers.Dropout(dropout, name='ClsDroupout')
-        self.cl2 = tf.keras.layers.Dense(n_classes if n_classes != 2 else 1, name='DenseCls2', activation='sigmoid')
+        self.cl2 = tf.keras.layers.Dense(n_classes if n_classes != 2 else 1, name='DenseCls2')# , activation='sigmoid')
 
     def call(self, X):
         X_prime = X

@@ -3,6 +3,7 @@ import os
 import types
 
 from common.CustomFedAdam import CustomFedAdam
+from common.config import Config
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -25,20 +26,20 @@ from fire import Fire
 from common.utils import serialize_array, deserialize_string, client_malware_map, scale_data, MinMaxScaler, serialize, \
     deserialize, pprint_cm, plot_embedding
 from common.models import get_classification_model, MultiHeadAutoEncoder, MetricsTracker
-from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset
+from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset, load_day_dataset
 import pickle
 import pandas as pd
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
-from tensorflow.keras.metrics import Metric
 
 
 class AggregateCustomMetricStrategy(CustomFedAdam):
-    def __init__(self, model, **kwds):
-        self.model = model
+    def __init__(self, day, config, n_cls_layers, **kwds):
         kwds['on_fit_config_fn'] = self.fit_config
         kwds['on_evaluate_config_fn'] = self.evaluate_config
-        super().__init__(**kwds)
+        super().__init__(n_cls_layers, **kwds)
+        self.day = day
+        self.config = config
         self.prev_median_loss = np.inf
         self.proxy_spheres = {}
         self.scaler = None
@@ -55,7 +56,7 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
         results = sorted(results, key=lambda result: result[1].metrics['id'])
         if server_round == 1:
             self.scaler = sum((MinMaxScaler.load(r.metrics['scaler']) for _, r in results), start=MinMaxScaler())
-            with open('round-1-scaler.pckl', 'wb') as fb:
+            with self.config.scaler_file(self.day).open('wb') as fb:
                 pickle.dump(self.scaler, fb)
 
         classification_losses = np.array([r.metrics['val_classification_loss'] for _, r in results])
@@ -102,15 +103,11 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
         self.threshold = weighted_th
 
         self.proxy_spheres = {r.metrics['id']: deserialize(r.metrics['proxy_spheres']) for _, r in results}
-        self.model.set_spheres(self.proxy_spheres)
+
         print(f'Aggregating {len(results)} results')
         aggregated_weights = super().aggregate_fit(server_round, results, failures)
-        if aggregated_weights is not None and server_round == 9:
-            # Save aggregated_weights on the final round
-            print(f"[*] Saving round {server_round} aggregated_weights...")
-            np.savez(f"model-weights.npz", *aggregated_weights)
 
-        self.epoch += 1
+        self.epoch += self.config.local_epochs(server_round)
 
         return aggregated_weights
 
@@ -205,18 +202,17 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
         return super().aggregate_evaluate(server_round, results, failures)
 
     def fit_config(self, rnd: int):
-        """Return training configuration dict for each round.
-        Keep batch size fixed at 32, perform two rounds of training with one
-        local epoch, increase to two local epochs afterwards.
         """
-        mal_data = load_mal_data(5, Path('../data'))["CTU-Malware-Capture-Botnet-67-1"]
+        """
+        mal_data = load_day_dataset(self.config.vaccine(self.day))
         config = {
             "start_epoch": self.epoch,
-            "batch_size": 32,
-            "local_epochs": 1,  # 1 if rnd < 2 else 2,
-            "neg_dataset": serialize(mal_data),
-            "proxy_spheres": serialize(self.proxy_spheres)
+            "local_epochs": self.config.local_epochs(rnd),  # 1 if rnd < 2 else 2,
+            "threshold": self.threshold,
+            "proxy_spheres": serialize(self.proxy_spheres),
+            "mal_dataset": serialize(mal_data),
         }
+
         return config
 
     def evaluate_config(self, rnd: int):
@@ -231,52 +227,54 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
             "proxy_spheres": serialize(self.proxy_spheres)
         }
         if rnd > 1:
-            with open('round-1-scaler.pckl', 'rb') as f:
-                scaler = pickle.load(f)
-                config['scaler'] = scaler.dump()
+            config['scaler'] = serialize(self.scaler)
 
         return config
 
 
-def main(day: int, model_path: str, seed: int = 8181, data_dir: str = '../data', num_clients: int = 3) -> None:
+def main(day: int, config_path: str = None, **overrides) -> None:
     """
     Flower server
-    @param seed: Random seed
-    @param data_dir: Path to the data directory
-    @param num_clients: Number of clients
-    @param model_path Path to the autoencoder model
+    @param day: Day of the experiment
+    @param config_path: Path to the config file override
+    @param overrides: additional config overrides
     """
     # Load and compile model for
     # 1. server-side parameter initialization
     # 2. server-side parameter evaluation
+    config = Config.load(config_path, **overrides)
 
-    model_path = Path(model_path)
-    data_dir = Path(data_dir)
+    tf.keras.utils.set_random_seed(config.seed)
 
-    tf.keras.utils.set_random_seed(seed)
-
-    model = MultiHeadAutoEncoder()
+    model = MultiHeadAutoEncoder(config)
     model.compile()
-    model.predict(np.zeros((16, 36)))
-    num_rounds = 25
-    print(f"{num_clients=}")
+
+    if config.load and day > 1 and config.model_file(day-1).exists():
+        model.load_weights(config.model_file(day-1))
+        num_rounds = config.server.num_rounds_other_days
+    else:
+        num_rounds = config.server.num_rounds_first_day
+
+    print(f"{config.num_fit_clients=}")
 
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
-        model=model,
-        fraction_fit=1.0,
+        day=day,
+        config=config,
+        n_cls_layers=len(model.classifier.weights),
+        fraction_fit=config.num_fit_clients / config.num_evaluate_clients,
         fraction_evaluate=1.0,
-        min_fit_clients=num_clients,
-        min_evaluate_clients=num_clients,
-        min_available_clients=num_clients,
-        evaluate_fn=get_eval_fn(model, day, Path(data_dir), seed),
+        min_fit_clients=config.num_fit_clients,
+        min_evaluate_clients=config.num_evaluate_clients,
+        min_available_clients=config.num_evaluate_clients,
+        evaluate_fn=get_eval_fn(model, day, config),
         initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),
-        eta=1e-2
+        eta=config.server.learning_rate
     )
 
     # Start Flower server (SSL-enabled) for n rounds of federated learning
     fl.server.start_server(
-        server_address="0.0.0.0:8000",
+        server_address=f"{config.ip_address}:{config.port}",
         config=fl.server.ServerConfig(num_rounds=num_rounds, round_timeout=90.0),
         strategy=strategy,
         # certificates=(
@@ -286,24 +284,23 @@ def main(day: int, model_path: str, seed: int = 8181, data_dir: str = '../data',
         # ),
     )
 
-    X_test, y_test = load_data(data_dir, day, seed)
-    with open(f'round-1-scaler.pckl', 'rb') as f:
-        scaler = pickle.load(f)
+    X_test, y_test = load_data(config.data_dir, day, config.seed)
+
     X_test = strategy.scaler.transform(X_test)
     plot_embedding(X_test, y_test, model)
 
-    model.save_weights(f'day{day}_{seed}_model.h5')
+    model.save_weights(config.model_file(day))
     spheres = model.loss.spheres
-    with open(f'day{day}_{seed}_spheres.h5', 'wb') as f:
+    with config.spheres_file(day).open('wb') as f:
         pickle.dump(spheres, f)
-    with open(f'round-1-scaler.pckl', 'rb') as f:
-        scaler = pickle.load(f)
+    with config.scaler_file(day).open('wb') as f:
+        pickle.dump(strategy.scaler, f)
 
 
-def get_eval_fn(model, day, data_dir, seed):
+def get_eval_fn(model, day: int, experiment_config: Config):
     """Return an evaluation function for server-side evaluation."""
 
-    X_test, y_test = load_data(data_dir, day, seed)
+    X_test, y_test = load_data(experiment_config.data_dir, day, experiment_config.seed)
 
     # The `evaluate` function will be called after every round
     def evaluate(
@@ -315,7 +312,7 @@ def get_eval_fn(model, day, data_dir, seed):
 
         # Read the stored per-feature maximums and minimums
         if server_round > 1:
-            with open(f'round-1-scaler.pckl', 'rb') as f:
+            with experiment_config.scaler_file(day).open('rb') as f:
                 scaler = pickle.load(f)
         else:
             scaler = MinMaxScaler().from_min_max(-10 * np.ones(36), 10 * np.ones(36))
@@ -328,16 +325,21 @@ def get_eval_fn(model, day, data_dir, seed):
         mse, y_pred, bce = model.eval(X_test_, y_test)
 
         y_ad_pred = (mse > threshold).astype(float).T
+        y_cls_pred = (y_pred > 0.5).astype(float)
 
-        ad_report = classification_report(y_test, y_ad_pred, output_dict=True, label=[0.0, 1.0],
+        ad_report = classification_report(y_test, y_ad_pred, output_dict=True, labels=[0.0, 1.0],
                                           target_names=['Benign', 'Malicious'])
-        supervised_report = classification_report(y_test, y_pred, output_dict=True, label=[0.0, 1.0],
+        supervised_report = classification_report(y_test, y_cls_pred, output_dict=True, labels=[0.0, 1.0],
                                           target_names=['Benign', 'Malicious'])
 
-        report = {f'ad_{key}': val for key, val in ad_report.items()}.update(
+        report = {f'ad_{key}': val for key, val in ad_report.items()}
+        report.update(
             {f'sup_{key}': val for key, val in supervised_report.items()}
         )
         # Detect all the samples which are anomalies.
+
+        print("Evaluate confusion matrix")
+        pprint_cm(confusion_matrix(y_test, y_cls_pred), ['Benign', 'Malicious'])
 
         return bce + mse.sum(), report
 
@@ -366,66 +368,6 @@ def load_data(data_dir, day, seed):
 
     return X_test, y_test
 
-
-def mergeFunctionMetadata(f, g):
-    """
-    Overwrite C{g}'s name and docstring with values from C{f}.  Update
-    C{g}'s instance dictionary with C{f}'s.
-    To use this function safely you must use the return value. In Python 2.3,
-    L{mergeFunctionMetadata} will create a new function. In later versions of
-    Python, C{g} will be mutated and returned.
-    @return: A function that has C{g}'s behavior and metadata merged from
-        C{f}.
-    """
-    try:
-        g.__name__ = f.__name__
-    except TypeError:
-        try:
-            merged = types.FunctionType(
-                g.func_code, g.func_globals,
-                f.__name__, inspect.getargspec(g)[-1],
-                g.func_closure)
-        except TypeError:
-            pass
-    else:
-        merged = g
-    try:
-        merged.__doc__ = f.__doc__
-    except (TypeError, AttributeError):
-        pass
-    try:
-        merged.__dict__.update(g.__dict__)
-        merged.__dict__.update(f.__dict__)
-    except (TypeError, AttributeError):
-        pass
-    merged.__module__ = f.__module__
-    return merged
-
-
-def custom_aggregate(results: List[Tuple[NDArrays, int]]) -> NDArrays:
-    """Compute weighted average."""
-    # Calculate the total number of examples used during training
-    num_examples_total = sum([num_examples for _, num_examples in results])
-
-    per_layer_examples = [
-        [num_examples if layer.any() else 0 for layer in layers]
-        for layers, num_examples in results
-    ]
-    layer_examples = [sum(examples) for examples in zip(*per_layer_examples)]
-    # Create a list of weights, each multiplied by the related number of examples
-    weighted_weights = [
-        [layer * num_examples for layer in weights] for weights, num_examples in results
-    ]
-
-    # Compute average weights of each layer
-    weights_prime: NDArrays = [
-        reduce(np.add, layer_updates) / num_examples_total
-        for layer_examples, *layer_updates in zip(layer_examples, *weighted_weights)
-    ]
-    return weights_prime
-
-
-mergeFunctionMetadata(custom_aggregate, fl.server.strategy.aggregate.aggregate)
 
 if __name__ == "__main__":
     Fire(main)

@@ -17,7 +17,6 @@ from common.utils import MinMaxScaler, pprint_cm, deserialize
 from common.models import MultiHeadAutoEncoder
 from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset
 import pandas as pd
-import os
 import fire
 from common.config import Config
 
@@ -130,7 +129,6 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
 
         config = {
             "start_epoch": self.epoch,
-            "batch_size": self.config.server.batch_size,
             "local_epochs": self.config.local_epochs(rnd),
             "threshold": self.threshold
             # "proxy_spheres": serialize(self.proxy_spheres)
