@@ -18,6 +18,7 @@ import numpy as np
 from pathlib import Path
 
 import flwr as fl
+from flwr.common.logger import logger
 from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset, load_day_dataset
 from common.models import get_classification_model, MultiHeadAutoEncoder
 from common.utils import get_threshold, serialize_array, \
@@ -108,19 +109,21 @@ class ADClient(fl.client.NumPyClient):
 
         loss = history.history["total_loss"][0]
         val_loss = history.history["val_total_loss"][0]
-        val_reconstruction_loss = history.history['val_reconstruction_loss'][0]
-        val_classification_loss = history.history['val_classification_loss'][0]
-        val_positive_loss = history.history['val_positive_loss'][0]
-        val_negative_loss = history.history['val_negative_loss'][0]
-        val_prox_loss = history.history['val_proximal_loss'][0]
-        if np.isnan(loss) or np.isnan(val_loss):
-            print("[+] HERE!", np.isnan(loss), np.isnan(val_loss))
-            self.model.set_weights(parameters)
+        val_reconstruction_loss = history.history['val_rec_loss'][0]
+        val_classification_loss = history.history['val_class_loss'][0]
+        val_positive_loss = history.history['val_+loss'][0]
+        val_negative_loss = history.history['val_+loss'][0]
+        val_prox_loss = history.history['val_prox_loss'][0]
+
 
         # Calculate the threshold based on the local validation data
-        rec = self.model.predict(X_val)[:, :-1]
-        mse = np.mean(np.power(X_val - rec, 2), axis=1)
-        self.threshold = get_threshold(X_val, mse)
+        ben_val = X_val[(y_val == 0)[:, 0]]
+        rec = self.model.predict(ben_val)[:, :-1]
+        mse = np.mean(np.power(ben_val - rec, 2), axis=1)
+        self.threshold = get_threshold(ben_val, mse)
+
+        cls_pred = self.model.predict(X_val)[:, -1]
+        val_acc = ((cls_pred > 0.5) == y_val).mean()
 
         # Return updated model parameters and results
         parameters_prime = self.model.get_weights()
@@ -133,6 +136,7 @@ class ADClient(fl.client.NumPyClient):
             'val_positive_loss': val_positive_loss,
             'val_negative_loss': val_negative_loss,
             'val_prox_loss': val_prox_loss,
+            'val_acc': val_acc,
             "scaler": self.scaler.dump(),
             "proxy_spheres": serialize(proxy_spheres),
             "tracker": self.model.tracker.serialize(),
@@ -149,11 +153,12 @@ class ADClient(fl.client.NumPyClient):
 
         # Update local model with global parameters
         self.model.set_weights(parameters)
-        print(f'Client {self.client_id} - classifier disabled: {self.model.disable_classifier}')
+        #log(f'Client {self.client_id} - classifier disabled: {self.model.disable_classifier}')
 
         # Get config values
         steps: int = config["val_steps"]
         self.threshold = config['threshold']
+        logger.info(f'Client {self.client_id} - threshold: {self.threshold}')
         if 'scaler' in config:
             self.scaler = MinMaxScaler.load(config["scaler"])
 
@@ -180,6 +185,10 @@ class ADClient(fl.client.NumPyClient):
         cls_fp = int((cls_mal_true == 0).sum())
         cls_tp = int((cls_mal_true == 1).sum())
 
+        cls_ben_true = self.y_test[y_pred == 0]
+        cls_tn = int((cls_ben_true == 0).sum())
+        cls_fn = int((cls_ben_true == 1).sum())
+
         cls_tpr = (cls_tp / num_malware) if num_malicious else np.nan
         cls_fpr = cls_fp / num_benign
 
@@ -200,6 +209,8 @@ class ADClient(fl.client.NumPyClient):
         eval_results = {
             "cls_fp": cls_fp,
             "cls_tp": cls_tp,
+            'cls_tn': cls_tn,
+            'cls_fn': cls_fn,
             'cls_tpr': cls_tpr,
             'cls_fpr': cls_fpr,
             "class_accuracy": cls_acc,
@@ -216,6 +227,7 @@ class ADClient(fl.client.NumPyClient):
     def prepare_local_dataset(self, vaccine: np.array):
         X_train = self.scaler.transform(self.X_train)
         X_val = self.scaler.transform(self.X_val)
+        vaccine = self.scaler.transform(vaccine)
         if self.y_train.sum() > 0 and not self.config.client.use_vaccine_if_own:
             return X_train, X_val, self.y_train.reshape((-1, 1)), self.y_val.reshape((-1, 1))
 
@@ -234,10 +246,9 @@ class ADClient(fl.client.NumPyClient):
         shuffle_train = np.arange(X.shape[0] + mal.shape[0])
         np.random.shuffle(shuffle_train)
 
-        mal_ratio = y.mean()
-        if mal_ratio == 0.0:
-            mal = np.resize(mal.to_numpy(), (int(X.shape[0] * 1.), X.shape[1]))
-
+        # mal_ratio = y.mean()
+        # if mal_ratio == 0.0:
+        #     mal = np.resize(mal.to_numpy(), (int(X.shape[0] * 1.), X.shape[1]))
         X = np.concatenate([X, mal], axis=0)[shuffle_train]
         y = np.concatenate([y, np.ones(mal.shape[0])])[shuffle_train].reshape(-1, 1)
         return X, y
@@ -250,7 +261,7 @@ class ADClient(fl.client.NumPyClient):
             centroid = embedded_cls.mean(axis=0)
             radius = np.linalg.norm(embedded_cls - centroid, axis=1).max()
             true_spheres[cls] = (centroid, radius)
-            print(f"Client {self.client_id}, {cls=}, {radius=}")
+            #print(f"Client {self.client_id}, {cls=}, {radius=}")
             proxy_radius = radius + max(radius * self.proxy_radius_mult, 0.1)
             proxy_center = self.random_point_on_sphere(centroid, proxy_radius)
             proxy_spheres[cls] = (proxy_center, proxy_radius)
@@ -273,14 +284,41 @@ def load_partition(day: int, client_id: int, config: Config):
     X_mal_train = load_day_dataset(config.client_malware(client_id, day), drop_labels=False)
     X_mal_test = load_day_dataset(config.client_malware(client_id, day+1), drop_labels=False)
 
-    X_train, X_val, y_train, y_val = create_supervised_dataset(X_ben_train, X_mal_train, 0.2, config.seed, resize_mal=True)
+    X_train, X_val, y_train, y_val = create_supervised_dataset(X_ben_train, X_mal_train, 0.2, config.seed)
     X_test, _, y_test, _ = create_supervised_dataset(X_ben_test, X_mal_test, 0.0, config.seed)
 
-    print(f"[+] Num train samples for client {client_id}: {X_train.shape[0]}")
-    print(f"[+] Num of train malicious samples for client {client_id}: {(y_train == 1.0).sum()}")
-    print(f"[+] Num of features for client {client_id}: {X_train.shape[1]}")
+    logger.info(f"[+] Num train samples for client {client_id}: {X_train.shape[0]}")
+    logger.info(f"[+] Num of train malicious samples for client {client_id}: {(y_train == 1.0).sum()}")
+    logger.info(f"[+] Num of features for client {client_id}: {X_train.shape[1]}")
 
     return X_train, X_val, X_test, y_train, y_val, y_test
+
+# def load_partition(day: int, client_id: int, data_dir: Path, seed):
+#     """Load the training and test data to simulate a partition."""
+#     assert client_id in range(1, 11)
+#     assert day in range(1, 6)
+#
+#     X_ben_train, X_ben_test = load_ben_data(day, client_id, data_dir, drop_labels=False)
+#     if day == 1:
+#         client_malwares = {client_malware_map[client_id], client_malware_map[5]}
+#     else:
+#         client_malwares = {client_malware_map[client_id]}
+#     print(f"====\n\n\n Reading MAL DATA from {client_malwares}\n\n\n")
+#
+#     mal_tr = load_mal_data(day, data_dir, drop_labels=False)
+#     mal_ts = load_mal_data(day+1, data_dir, drop_labels=False)
+#     X_mal_train = pd.concat([mal_tr[mal] for mal in client_malwares]) #if client_id in client_malware_map else pd.DataFrame()
+#     print(X_mal_train.shape)
+#     X_mal_test = pd.concat([mal_ts[mal] for mal in client_malwares]) #if client_id in client_malware_map else pd.DataFrame() #[client_malware_map[client_id]]
+#
+#     X_train, X_val, y_train, y_val = create_supervised_dataset(X_ben_train, X_mal_train, 0.2, seed)
+#     X_test, _, y_test, _ = create_supervised_dataset(X_ben_test, X_mal_test, 0.0, seed)
+#
+#     print(f"[+] Num train samples for client {client_id}: {X_train.shape[0]}")
+#     print(f"[+] Num of train malicious samples for client {client_id}: {(y_train == 1.0).sum()}")
+#     print(f"[+] Num of features for client {client_id}: {X_train.shape[1]}")
+#
+#     return X_train, X_val, X_test, y_train, y_val, y_test
 
 
 def main(client_id: int, day: int, config_path: str = None, **overrides) -> None:
@@ -290,7 +328,9 @@ def main(client_id: int, day: int, config_path: str = None, **overrides) -> None
 
     tf.keras.utils.set_random_seed(config.seed)
 
+    # X_train, X_val, X_test, y_train, y_val, y_test = load_partition(day, client_id, config.data_dir, config.seed)
     X_train, X_val, X_test, y_train, y_val, y_test = load_partition(day, client_id, config)
+
 
     disable_classifier = (y_train == 1).sum() < 1
     # Load and compile Keras model

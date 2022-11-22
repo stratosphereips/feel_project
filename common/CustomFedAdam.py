@@ -5,6 +5,7 @@ import flwr as fl
 import numpy as np
 from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays, NDArrays, FitRes, Parameters, Scalar
 from flwr.server.client_proxy import ClientProxy
+from flwr.server.strategy.aggregate import aggregate
 
 
 class CustomFedAdam(fl.server.strategy.FedAdam):
@@ -71,8 +72,8 @@ class CustomFedAdam(fl.server.strategy.FedAdam):
 
         # Convert results
         weights_results = [
-            # (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples)
-             (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples, fit_res.metrics['num_mal_examples_train'])
+            (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples)
+            # (parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples, fit_res.metrics['num_mal_examples_train'])
             for _, fit_res in results
         ]
         parameters_aggregated = ndarrays_to_parameters(self._aggregate(weights_results))
@@ -85,61 +86,61 @@ class CustomFedAdam(fl.server.strategy.FedAdam):
 
         return parameters_aggregated, metrics_aggregated
 
-    # @staticmethod
-    # def _aggregate(results: List[Tuple[NDArrays, int]]) -> NDArrays:
-    #     """Compute weighted average."""
-    #     # Calculate the total number of examples used during training
-    #     num_examples_total = sum([num_examples for _, num_examples in results])
-    #
-    #     per_layer_examples = [
-    #         [num_examples if layer.any() else 0 for layer in layers]
-    #         for layers, num_examples in results
-    #     ]
-    #     layer_examples = [sum(examples) for examples in zip(*per_layer_examples)]
-    #     # Create a list of weights, each multiplied by the related number of examples
-    #     weighted_weights = [
-    #         [layer * num_examples for layer in weights] for weights, num_examples in results
-    #     ]
-    #
-    #     # Compute average weights of each layer
-    #     weights_prime: NDArrays = [
-    #         reduce(np.add, layer_updates) / num_examples_total
-    #         for layer_examples, *layer_updates in zip(layer_examples, *weighted_weights)
-    #     ]
-    #     return weights_prime
-
-    def _aggregate(self, results: List[Tuple[NDArrays, int, int]]) -> NDArrays:
+    @staticmethod
+    def _aggregate(results: List[Tuple[NDArrays, int]]) -> NDArrays:
         """Compute weighted average."""
         # Calculate the total number of examples used during training
-        # num_examples_total = sum([num_examples for _, num_examples, _ in results])
-        # num_mal_examples_total = sum([num_examples for _, _, num_examples in results])
-        n_layers = len(results[0][0])
+        num_examples_total = sum([num_examples for _, num_examples in results])
 
-        per_layer_examples = []
-        for layers, num_examples, num_mal_examples in results:
-            layer_examples = []
-            for layer_num, layer in enumerate(layers):
-                if not layer.any():
-                    layer_examples.append(0)
-                elif layer_num >= n_layers - self.n_cls_layers:
-                    layer_examples.append(num_mal_examples)
-                else:
-                    layer_examples.append(num_examples)
-            per_layer_examples.append(layer_examples)
-
+        per_layer_examples = [
+            [num_examples if layer.any() else 0 for layer in layers]
+            for layers, num_examples in results
+        ]
         layer_examples = [sum(examples) for examples in zip(*per_layer_examples)]
         # Create a list of weights, each multiplied by the related number of examples
         weighted_weights = [
-            [layer * num_examples for layer, num_examples in zip(weights, client_examples)]
-            for (weights, _, _), client_examples in zip(results, per_layer_examples)
+            [layer * num_examples for layer in weights] for weights, num_examples in results
         ]
 
         # Compute average weights of each layer
         weights_prime: NDArrays = [
-            reduce(np.add, layer_updates) / (num_examples if num_examples > 0 else 1.0)
-            for num_examples, *layer_updates in zip(layer_examples, *weighted_weights)
+            reduce(np.add, layer_updates) / num_examples_total
+            for layer_examples, *layer_updates in zip(layer_examples, *weighted_weights)
         ]
         return weights_prime
+    #
+    # def _aggregate(self, results: List[Tuple[NDArrays, int, int]]) -> NDArrays:
+    #     """Compute weighted average."""
+    #     # Calculate the total number of examples used during training
+    #     # num_examples_total = sum([num_examples for _, num_examples, _ in results])
+    #     # num_mal_examples_total = sum([num_examples for _, _, num_examples in results])
+    #     n_layers = len(results[0][0])
+    #
+    #     per_layer_examples = []
+    #     for layers, num_examples, num_mal_examples in results:
+    #         layer_examples = []
+    #         for layer_num, layer in enumerate(layers):
+    #             if not layer.any():
+    #                 layer_examples.append(0)
+    #             elif layer_num >= n_layers - self.n_cls_layers:
+    #                 layer_examples.append(num_mal_examples)
+    #             else:
+    #                 layer_examples.append(num_examples)
+    #         per_layer_examples.append(layer_examples)
+    #
+    #     layer_examples = [sum(examples) for examples in zip(*per_layer_examples)]
+    #     # Create a list of weights, each multiplied by the related number of examples
+    #     weighted_weights = [
+    #         [layer * num_examples for layer, num_examples in zip(weights, client_examples)]
+    #         for (weights, _, _), client_examples in zip(results, per_layer_examples)
+    #     ]
+    #
+    #     # Compute average weights of each layer
+    #     weights_prime: NDArrays = [
+    #         reduce(np.add, layer_updates) / (num_examples if num_examples > 0 else 1.0)
+    #         for num_examples, *layer_updates in zip(layer_examples, *weighted_weights)
+    #     ]
+    #     return weights_prime
 
     def evaluate(
         self, server_round: int, parameters: Parameters

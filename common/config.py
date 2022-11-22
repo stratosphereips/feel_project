@@ -1,6 +1,7 @@
+from functools import reduce
 from typing import Optional
 
-from pyhocon import ConfigFactory, ConfigTree
+from pyhocon import ConfigFactory, ConfigTree, HOCONConverter
 from pathlib import Path
 
 from pyhocon.config_tree import NonExistentKey
@@ -17,6 +18,9 @@ class Config(ConfigTree):
         config.__init__()
         return config
 
+    def save(self, file):
+        file.write(HOCONConverter.to_hocon(self))
+
     @property
     def data_dir(self) -> Path:
         return Path(self['data_dir'])
@@ -27,7 +31,7 @@ class Config(ConfigTree):
 
     @property
     def experiment_dir(self) -> Path:
-        directory = Path(f'experiment_{self.id}_{self.seed}')
+        directory = Path(f'experiment_{self.id}')
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
@@ -72,16 +76,20 @@ class Config(ConfigTree):
         return self.malware_dir / self.malware_dirs[malware_id] / f'Day{day}'
 
     def vaccine(self, day: int) -> Path:
-        malware_id, malware_day = self.server.vaccine_malware[day].split('_')
+        malware_id, malware_day = self.server.vaccine_malware[day-1].split('_')
+        # print(f"====\n\n\n Reading vaccine from {self.malware_dir / self.malware_dirs[malware_id] / f'Day{malware_day}'}\n\n\n")
         return self.malware_dir / self.malware_dirs[malware_id] / f'Day{malware_day}'
 
     @staticmethod
     def _parse_files(files):
-        contents = []
+        configs = []
         for file in files:
-            with file.open('r') as f:
-                contents.append(f.read())
-        return ConfigFactory.parse_string("\n".join(contents))
+            configs.append(ConfigFactory.parse_file(file))
+
+        config = configs[0]
+        for other_config in configs[1:]:
+            ConfigTree.merge_configs(config, other_config)
+        return config
 
     def __getattr__(self, item):
         val = self.get(item, NonExistentKey)

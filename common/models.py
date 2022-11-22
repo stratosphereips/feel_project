@@ -115,8 +115,13 @@ class MultiHeadAutoEncoder(tf.keras.Model):
 
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=config.model.learning_rate)
 
-        self.loss = MultiHeadLoss(self.tracker, disable_classifier=config.model.disable_classifier,
-                                  variational=config.model.variational, spheres={})
+        self.loss = MultiHeadLoss(
+            self.tracker,
+            disable_classifier=config.model.disable_classifier,
+            variational=config.model.variational,
+            spheres={},
+            disable_reconstruction=config.model.disable_reconstruction
+        )
 
         self.proximal = config.model.proximal
         self.mu = config.model.mu
@@ -224,11 +229,11 @@ class MultiHeadAutoEncoder(tf.keras.Model):
 class MetricsTracker:
     def __init__(self):
         self.total = tf.keras.metrics.Mean(name="total_loss")
-        self.classification = tf.keras.metrics.Mean(name="classification_loss")
-        self.reconstruction = tf.keras.metrics.Mean(name="reconstruction_loss")
-        self.positive = tf.keras.metrics.Mean(name="positive_loss")
-        self.negative = tf.keras.metrics.Mean(name="negative_loss")
-        self.proximal = tf.keras.metrics.Mean(name='proximal_loss')
+        self.classification = tf.keras.metrics.Mean(name="class_loss")
+        self.reconstruction = tf.keras.metrics.Mean(name="rec_loss")
+        self.positive = tf.keras.metrics.Mean(name="+loss")
+        self.negative = tf.keras.metrics.Mean(name="-loss")
+        self.proximal = tf.keras.metrics.Mean(name='prox_loss')
         self.kl = tf.keras.metrics.Mean(name="kl_loss")
 
     def get_trackers(self) -> List['MetricsTracker']:
@@ -259,7 +264,15 @@ class MetricsTracker:
 
 
 class MultiHeadLoss(tf.keras.losses.Loss):
-    def __init__(self, tracker: MetricsTracker, dim=36, variational=False, disable_classifier=False, spheres=None):
+    def __init__(
+            self,
+            tracker: MetricsTracker,
+            dim=36,
+            variational=False,
+            disable_classifier=False,
+            spheres=None,
+            disable_reconstruction=False
+    ):
         super().__init__()
         self.dim = dim
         self.bce = tf.keras.losses.BinaryCrossentropy(from_logits=True)
@@ -267,6 +280,7 @@ class MultiHeadLoss(tf.keras.losses.Loss):
         self.tracker = tracker
         self.variational = variational
         self.disable_classifier = disable_classifier
+        self.disable_reconstruction = False
         self.spheres = spheres if spheres is not None else {}
         self.local_spheres = None
         self._epsilon = 1e-9
@@ -313,7 +327,8 @@ class MultiHeadLoss(tf.keras.losses.Loss):
         self.tracker.classification.update_state(cross_entropy_loss)
         total_loss += cross_entropy_loss
 
-        reconstruction_loss = self.mce(reconstructed_true_ben, reconstructed_pred_ben)
+        reconstruction_loss = self.mce(reconstructed_true_ben, reconstructed_pred_ben)\
+            if not self.disable_reconstruction else 0.0
         self.tracker.reconstruction.update_state(reconstruction_loss)
 
         total_loss += reconstruction_loss

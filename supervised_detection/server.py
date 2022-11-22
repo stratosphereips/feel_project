@@ -1,6 +1,8 @@
 import inspect
 import os
 import types
+from collections import defaultdict
+from copy import deepcopy
 
 from common.CustomFedAdam import CustomFedAdam
 from common.config import Config
@@ -13,7 +15,7 @@ warnings.filterwarnings('ignore')
 
 from functools import reduce
 
-from flwr.common import FitRes, Parameters, Scalar, NDArrays, parameters_to_ndarrays, ndarrays_to_parameters
+from flwr.common import FitRes, Parameters, Scalar, NDArrays, parameters_to_ndarrays, ndarrays_to_parameters, Metrics
 from flwr.server.client_proxy import ClientProxy
 
 from typing import Dict, Optional, Tuple, List, Union
@@ -37,6 +39,8 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
     def __init__(self, day, config, n_cls_layers, **kwds):
         kwds['on_fit_config_fn'] = self.fit_config
         kwds['on_evaluate_config_fn'] = self.evaluate_config
+        kwds['evaluate_metrics_aggregation_fn'] = self.evaluate_metrics
+        kwds['fit_metrics_aggregation_fn'] = self.evaluate_metrics
         super().__init__(n_cls_layers, **kwds)
         self.day = day
         self.config = config
@@ -45,6 +49,11 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
         self.scaler = None
         self.epoch = 0
         self.threshold = 100
+        self.best_val_params = None
+        self.best_round = -1
+        self.best_val_acc = -np.inf
+        self.val_losses = []
+        self.val_acc = []
 
     def aggregate_fit(
             self,
@@ -52,7 +61,7 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
             results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
             failures: List[BaseException],
     ) -> Optional[fl.common.Parameters]:
-        results = [result for result in results if result[1].num_examples]
+        # results = [result for result in results if result[1].num_examples]
         results = sorted(results, key=lambda result: result[1].metrics['id'])
         if server_round == 1:
             self.scaler = sum((MinMaxScaler.load(r.metrics['scaler']) for _, r in results), start=MinMaxScaler())
@@ -73,6 +82,15 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
         print(f'\nProximal losses after round {server_round}: \n{prox_losses}\n'
               f'median: {np.median(prox_losses)}\t '
               f'max is client {np.argmax(prox_losses)}: {np.max(prox_losses)}\n')
+
+        n_examples = sum((r.num_examples for _, r in results))
+        val_accs = np.array([r.metrics['val_acc'] * r.num_examples for _, r in results])
+        val_acc = val_accs.sum() / n_examples
+
+        val_loss = np.array([r.metrics['val_acc'] * r.num_examples for _, r in results]).sum() / n_examples
+
+        self.val_acc.append((server_round, val_acc))
+        self.val_losses.append((server_round, val_loss))
 
         # tracker = sum((MetricsTracker.deserialize(r.metrics['tracker']) for _, r in results), MetricsTracker())
         # for t in tracker.get_trackers():
@@ -106,6 +124,12 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
 
         print(f'Aggregating {len(results)} results')
         aggregated_weights = super().aggregate_fit(server_round, results, failures)
+
+        if val_acc >= self.best_val_acc:
+            print(f"[*] Round {server_round} best val accuracy so far: {val_acc}, saving model")
+            self.best_val_params = deepcopy(self.current_weights)
+            self.best_val_acc = val_acc
+            self.best_round = server_round
 
         self.epoch += self.config.local_epochs(server_round)
 
@@ -231,6 +255,34 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
 
         return config
 
+    @staticmethod
+    def evaluate_metrics(client_metrics: List[Tuple[int, Metrics]]) -> Metrics:
+        metrics = {}
+        # consistent ordering so that weighted average makes sense
+        client_metrics.sort(key=lambda x: x[0])
+
+        client_examples = np.array([num_examples for num_examples, _ in client_metrics])
+
+        metrics_transpose = defaultdict(list)
+        for _, m in client_metrics:
+            for metric_name, metric_value in m.items():
+                metrics_transpose[metric_name].append(metric_value)
+        metrics_transpose = {
+            metric_name: np.array(metric_values)
+            for metric_name, metric_values
+            in metrics_transpose.items()
+        }
+        ignore_set = {'id', 'scaler', 'proxy_spheres', 'tracker', 'confusion_matrix'}
+
+        for metric_name, metric_values in metrics_transpose.items():
+            if metric_name in ignore_set:
+                continue
+            if np.issubdtype(metric_values.dtype, np.integer):
+                metrics[metric_name] = metric_values.sum()
+            else:
+                metrics[metric_name] = np.average(metric_values, weights=client_examples)
+        return metrics
+
 
 def main(day: int, config_path: str = None, **overrides) -> None:
     """
@@ -249,8 +301,8 @@ def main(day: int, config_path: str = None, **overrides) -> None:
     model = MultiHeadAutoEncoder(config)
     model.compile()
 
-    if config.load and day > 1 and config.model_file(day-1).exists():
-        model.load_weights(config.model_file(day-1))
+    if config.load and day > 1 and config.model_file(day - 1).exists():
+        model.load_weights(config.model_file(day - 1))
         num_rounds = config.server.num_rounds_other_days
     else:
         num_rounds = config.server.num_rounds_first_day
@@ -273,7 +325,7 @@ def main(day: int, config_path: str = None, **overrides) -> None:
     )
 
     # Start Flower server (SSL-enabled) for n rounds of federated learning
-    fl.server.start_server(
+    results = fl.server.start_server(
         server_address=f"{config.ip_address}:{config.port}",
         config=fl.server.ServerConfig(num_rounds=num_rounds, round_timeout=90.0),
         strategy=strategy,
@@ -286,8 +338,13 @@ def main(day: int, config_path: str = None, **overrides) -> None:
 
     X_test, y_test = load_data(config.data_dir, day, config.seed)
 
-    X_test = strategy.scaler.transform(X_test)
-    plot_embedding(X_test, y_test, model)
+    # X_test = strategy.scaler.transform(X_test)
+    # plot_embedding(X_test, y_test, model)
+
+    # model.set_weights(strategy.best_val_params)
+    results.metrics_centralized['best_round'] = strategy.best_round
+    results.val_losses_distributed = strategy.val_losses
+    results.val_acc_distributed = strategy.val_acc
 
     model.save_weights(config.model_file(day))
     spheres = model.loss.spheres
@@ -295,6 +352,8 @@ def main(day: int, config_path: str = None, **overrides) -> None:
         pickle.dump(spheres, f)
     with config.scaler_file(day).open('wb') as f:
         pickle.dump(strategy.scaler, f)
+    with config.results_file(day).open('wb') as f:
+        pickle.dump(results, f)
 
 
 def get_eval_fn(model, day: int, experiment_config: Config):
@@ -330,7 +389,7 @@ def get_eval_fn(model, day: int, experiment_config: Config):
         ad_report = classification_report(y_test, y_ad_pred, output_dict=True, labels=[0.0, 1.0],
                                           target_names=['Benign', 'Malicious'])
         supervised_report = classification_report(y_test, y_cls_pred, output_dict=True, labels=[0.0, 1.0],
-                                          target_names=['Benign', 'Malicious'])
+                                                  target_names=['Benign', 'Malicious'])
 
         report = {f'ad_{key}': val for key, val in ad_report.items()}
         report.update(

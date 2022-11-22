@@ -1,9 +1,7 @@
 #!/bin/bash
 
 day=$1
-seed=$2
-num_clients=$3
-model_path=$4
+num_clients=$2
 
 PROJECT_DIR="$(readlink -f ..)"
 export PYTHONPATH="${PYTHONPATH}:${PROJECT_DIR}"
@@ -13,8 +11,8 @@ export PYTHONPATH="${PYTHONPATH}:${PROJECT_DIR}"
 echo "Starting server for day ${day}, seed ${seed}, and ${num_clients} clients."
 python server.py --day ${day} &
 
-sleep 3  # Sleep for 3s to give the server enough time to start
-for i in 1 2 3 4 5 6 7 8 9 10; do
+sleep 5  # Sleep for 3s to give the server enough time to start
+for i in `seq 1 ${num_clients}`; do
     echo "Starting client $i"
     python client.py --day ${day} --client_id ${i} &
 done
