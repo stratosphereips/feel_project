@@ -1,8 +1,7 @@
 #!/bin/bash
 
 day=$1
-seed=$2
-num_clients=$3
+num_clients=$2
 
 PROJECT_DIR="$(readlink -f ..)"
 export PYTHONPATH="${PYTHONPATH}:${PROJECT_DIR}"

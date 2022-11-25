@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from multiprocessing import Process
 from pathlib import Path
 
-from common.config import Config
+from common.config import Config, Setting
 from time import sleep
 import random
 import shutil
@@ -19,13 +19,24 @@ class BaseExperiment:
 
         for run in range(self.config.num_runs):
             with self.config_with_random_seed(run) as config_path:
-                for day in range(1, self.config.days+1):
+                for day in range(1, self.config.days + 1):
                     self.run_day(day, config_path)
+                for day in range(1, self.config.days + 1):
+                    self.run_day(day, config_path, local=True)
+                for day in range(1, self.config.days + 1):
+                    self.run_centralized(day, config_path)
 
-    def run_day(self, day: int, config_path: Path):
-        server_process = Process(target=self.server_target, args=(day, config_path))
 
-        client_processes = [Process(target=self.client_target, args=(client_id, day, config_path))
+    def run_day(self, day: int, config_path: Path, local=False):
+        kwargs = {'setting': Setting.LOCAL.value if local else Setting.FEDERATED.value}
+        server_process = Process(
+            target=self.server_target,
+            args=(day, config_path),
+            kwargs=kwargs
+        )
+
+        client_processes = [
+            Process(target=self.client_target, args=(client_id, day, config_path), kwargs=kwargs)
                             for client_id in range(1, self.config.num_evaluate_clients + 1)]
 
         print(f"Starting server for day {day}")
@@ -43,6 +54,17 @@ class BaseExperiment:
 
         server_process.join()
         print("Server terminated")
+
+    def run_centralized(self, day: int, config_path: Path):
+        local_process = Process(
+            target=self.centralized_target,
+            args=(day, config_path),
+            kwargs={'setting': Setting.CENTRALIZED.value}
+        )
+        print(f"Starting centralized for day {day}")
+        local_process.start()
+        local_process.join()
+        print(f"Centralized for day {day} terminated")
 
     @contextmanager
     def config_with_random_seed(self, run_num):
@@ -67,6 +89,9 @@ class BaseExperiment:
 
     @property
     def client_target(self):
+        raise NotImplemented
+
+    def centralized_target(self):
         raise NotImplemented
 
 

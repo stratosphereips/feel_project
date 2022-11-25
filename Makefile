@@ -7,6 +7,9 @@ EVAL_CLIENTS?=10
 build_anomaly_detection_docker:
 	docker build -t stratosphere/feel-ad:latest -f docker/anomaly_detection/Dockerfile .
 
+build_experiment_docker:
+	docker build -t stratosphere/feel-experiment:latest -f docker/experiment/Dockerfile .
+
 run_client:
 	docker run --network=host --volume "$(DATA_DIR)":/data stratosphere/feel-ad client --client_id $(CLIENT_ID) --day $(DAY) --ip_address $(IP_ADDRESS)
 

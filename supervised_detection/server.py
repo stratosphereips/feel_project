@@ -35,13 +35,13 @@ from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
 
 
-class AggregateCustomMetricStrategy(CustomFedAdam):
-    def __init__(self, day, config, n_cls_layers, **kwds):
+class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
+    def __init__(self, day, config, **kwds):
         kwds['on_fit_config_fn'] = self.fit_config
         kwds['on_evaluate_config_fn'] = self.evaluate_config
         kwds['evaluate_metrics_aggregation_fn'] = self.evaluate_metrics
         kwds['fit_metrics_aggregation_fn'] = self.evaluate_metrics
-        super().__init__(n_cls_layers, **kwds)
+        super().__init__(**kwds)
         self.day = day
         self.config = config
         self.prev_median_loss = np.inf
@@ -51,7 +51,7 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
         self.threshold = 100
         self.best_val_params = None
         self.best_round = -1
-        self.best_val_acc = -np.inf
+        self.best_val_loss = np.inf
         self.val_losses = []
         self.val_acc = []
 
@@ -60,8 +60,7 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
             server_round: int,
             results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
             failures: List[BaseException],
-    ) -> Optional[fl.common.Parameters]:
-        # results = [result for result in results if result[1].num_examples]
+    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
         results = sorted(results, key=lambda result: result[1].metrics['id'])
         if server_round == 1:
             self.scaler = sum((MinMaxScaler.load(r.metrics['scaler']) for _, r in results), start=MinMaxScaler())
@@ -87,7 +86,7 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
         val_accs = np.array([r.metrics['val_acc'] * r.num_examples for _, r in results])
         val_acc = val_accs.sum() / n_examples
 
-        val_loss = np.array([r.metrics['val_acc'] * r.num_examples for _, r in results]).sum() / n_examples
+        val_loss = np.array([r.metrics['val_loss'] * r.num_examples for _, r in results]).sum() / n_examples
 
         self.val_acc.append((server_round, val_acc))
         self.val_losses.append((server_round, val_loss))
@@ -123,17 +122,17 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
         self.proxy_spheres = {r.metrics['id']: deserialize(r.metrics['proxy_spheres']) for _, r in results}
 
         print(f'Aggregating {len(results)} results')
-        aggregated_weights = super().aggregate_fit(server_round, results, failures)
+        weights, metrics_aggregated = super().aggregate_fit(server_round, results, failures)
 
-        if val_acc >= self.best_val_acc:
-            print(f"[*] Round {server_round} best val accuracy so far: {val_acc}, saving model")
-            self.best_val_params = deepcopy(self.current_weights)
-            self.best_val_acc = val_acc
+        if val_loss <= self.best_val_loss:
+            print(f"[*] Round {server_round} best val loss so far: {val_loss}, saving model")
+            self.best_val_params = parameters_to_ndarrays(weights)
+            self.best_val_loss = val_loss
             self.best_round = server_round
 
         self.epoch += self.config.local_epochs(server_round)
 
-        return aggregated_weights
+        return weights, metrics_aggregated
 
     def aggregate_evaluate(
             self,
@@ -281,6 +280,14 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
                 metrics[metric_name] = metric_values.sum()
             else:
                 metrics[metric_name] = np.average(metric_values, weights=client_examples)
+
+        matrix_metrics = {'tp', 'tn', 'fp', 'fn'}
+        for matrix_el in matrix_metrics:
+            for _, client_m in client_metrics:
+                if matrix_el not in client_m:
+                    continue
+                metrics[f'{matrix_el}_{client_m["id"]:02}'] = client_m[matrix_el]
+
         return metrics
 
 
@@ -313,7 +320,6 @@ def main(day: int, config_path: str = None, **overrides) -> None:
     strategy = AggregateCustomMetricStrategy(
         day=day,
         config=config,
-        n_cls_layers=len(model.classifier.weights),
         fraction_fit=config.num_fit_clients / config.num_evaluate_clients,
         fraction_evaluate=1.0,
         min_fit_clients=config.num_fit_clients,
@@ -341,7 +347,7 @@ def main(day: int, config_path: str = None, **overrides) -> None:
     # X_test = strategy.scaler.transform(X_test)
     # plot_embedding(X_test, y_test, model)
 
-    # model.set_weights(strategy.best_val_params)
+    model.set_weights(strategy.best_val_params)
     results.metrics_centralized['best_round'] = strategy.best_round
     results.val_losses_distributed = strategy.val_losses
     results.val_acc_distributed = strategy.val_acc
@@ -376,7 +382,11 @@ def get_eval_fn(model, day: int, experiment_config: Config):
         else:
             scaler = MinMaxScaler().from_min_max(-10 * np.ones(36), 10 * np.ones(36))
 
-        threshold = config['threshold']
+        if config == {}:
+            print("Config is empty")
+            threshold = 100
+        else:
+            threshold = config['threshold']
 
         X_test_ = scaler.transform(X_test)
 
@@ -420,7 +430,7 @@ def load_data(data_dir, day, seed):
 
     ben_train, ben_test = zip(
         *[load_ben_data(day, client, data_dir, drop_labels=False, drop_four_tuple=True) for client in
-          range(1, 10)])
+          range(1, 11)])
     X_ben_test = pd.concat(ben_test, axis=0)
     X_mal_test = pd.concat(load_mal_data(day + 1, data_dir, drop_labels=False, drop_four_tuple=True).values(), axis=0)
     X_test, _, y_test, _ = create_supervised_dataset(X_ben_test, X_mal_test, 0.0, seed)

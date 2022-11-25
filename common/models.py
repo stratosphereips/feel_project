@@ -398,7 +398,9 @@ class Encoder(tf.keras.layers.Layer):
     def __init__(self, latent_dim=10, **kwargs):
         super(Encoder, self).__init__(**kwargs)
         self.l1 = tf.keras.layers.Dense(32, activation='elu')
-        self.l2 = tf.keras.layers.Dense(18, activation='elu')
+        self.drop = tf.keras.layers.Dropout(0.3)
+        self.l2 = tf.keras.layers.Dense(20, activation='elu')
+        self.drop = tf.keras.layers.Dropout(0.3)
         self.l3 = tf.keras.layers.Dense(latent_dim, activation='sigmoid')
         self.drop = tf.keras.layers.Dropout(0.3)
         self.layer_list = [self.l1, self.drop, self.l2, self.drop, self.l3]
@@ -427,8 +429,10 @@ class Decoder(tf.keras.layers.Layer):
 
     def __init__(self, original_dim=36, **kwargs):
         super(Decoder, self).__init__(**kwargs)
-        self.l1 = tf.keras.layers.Dense(18, activation='elu')
+        self.l1 = tf.keras.layers.Dense(20, activation='elu')
+        self.drop = tf.keras.layers.Dropout(0.3)
         self.l2 = tf.keras.layers.Dense(32, activation='elu')
+        self.drop = tf.keras.layers.Dropout(0.3)
         self.l3 = tf.keras.layers.Dense(original_dim, activation='elu')
         self.drop = tf.keras.layers.Dropout(0.3)
         self.layer_list = [self.l1, self.drop, self.l2, self.drop, self.l3]

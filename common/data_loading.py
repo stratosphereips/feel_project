@@ -5,6 +5,8 @@ from sklearn.utils import shuffle
 from collections import defaultdict
 import numpy as np
 
+from common.config import Config
+
 _label_cols = ['label', 'detailedlabel']
 _id_cols = ['id.orig_h', 'id.resp_h', 'id.orig_p', 'proto']
 
@@ -56,9 +58,49 @@ def create_supervised_dataset(df_ben: pd.DataFrame, df_mal: pd.DataFrame, test_r
         return train_test_split(X, y, test_size=test_ratio, shuffle=True, random_state=seed)
 
 
+def load_centralized_data(day: int, config: Config, train_malicious=True):
+    ben_train, mal_train = zip(
+        *[load_client_dataset(day, client, config) for client in range(1, config.num_fit_clients+1)]
+    )
+    X_ben_train = pd.concat(ben_train, axis=0)
+    X_mal_train = pd.concat(mal_train, axis=0) if train_malicious else pd.DataFrame()
+
+    X_train, X_val, y_train, y_val = create_supervised_dataset(X_ben_train, X_mal_train, config.client.val_ratio, config.seed)
+
+    ben_test, mal_test = zip(
+        *[load_client_dataset(day, client, config) for client in range(1, config.num_evaluate_clients+1)]
+    )
+    X_ben_test = pd.concat(ben_test, axis=0)
+    X_mal_test = pd.concat(mal_test, axis=0)
+    X_test, _, y_test, _ = create_supervised_dataset(X_ben_test, X_mal_test, 0.0, config.seed)
+
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def load_local_data(day: int, client_id: int, config: Config):
+    X_ben_train, X_mal_train = load_client_dataset(day, client_id, config)
+
+    X_train, X_val, y_train, y_val = create_supervised_dataset(X_ben_train, X_mal_train, config.client.val_ratio,
+                                                               config.seed)
+
+    X_ben_test, X_mal_test = load_client_dataset(day, client_id, config)
+    X_test, _, y_test, _ = create_supervised_dataset(X_ben_test, X_mal_test, 0.0, config.seed)
+
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def load_client_dataset(day: int, client_id: int, config: Config):
+    client_dir = config.data_dir / 'Processed' / f'Client{client_id}'
+    mal_dir = config.client_malware(client_id, day)
+
+    df_ben = _load_data(client_dir / f'Day{day}', drop_labels=False, drop_four_tuple=True, drop_malicious=True)
+    df_mal = _load_data(mal_dir, drop_labels=False, drop_four_tuple=True, drop_malicious=False) if mal_dir else pd.DataFrame()
+
+    return df_ben, df_mal
+
 def load_all_data(day: int, data_dir: Path, drop_labels=True, drop_four_tuple=True, seed=None):
     ben_train, ben_test = zip(
-        *[load_ben_data(day, client, data_dir, drop_labels=False, drop_four_tuple=drop_four_tuple) for client in range(1, 10)])
+        *[load_ben_data(day, client, data_dir, drop_labels=False, drop_four_tuple=drop_four_tuple) for client in range(1, 11)])
     X_ben_train = pd.concat(ben_train, axis=0)
     X_ben_test = pd.concat(ben_test, axis=0)
 

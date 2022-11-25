@@ -1,3 +1,4 @@
+from enum import Enum
 from functools import reduce
 from typing import Optional
 
@@ -6,6 +7,10 @@ from pathlib import Path
 
 from pyhocon.config_tree import NonExistentKey
 
+class Setting(Enum):
+    FEDERATED = 'federated'
+    CENTRALIZED = 'centralized'
+    LOCAL = 'local'
 
 class Config(ConfigTree):
     @staticmethod
@@ -13,7 +18,7 @@ class Config(ConfigTree):
         config_paths = [Path('default.conf')] + ([Path(config_path)] if config_path else [])
         config = Config._parse_files(config_paths)
         for key, value in overrides.items():
-            config['key'] = value
+            config.put(key, value)
         config.__class__ = Config
         config.__init__()
         return config
@@ -31,7 +36,7 @@ class Config(ConfigTree):
 
     @property
     def experiment_dir(self) -> Path:
-        directory = Path(f'experiment_{self.id}')
+        directory = Path(f'{self.output_dir}/experiment_{self.id}')
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
@@ -52,16 +57,19 @@ class Config(ConfigTree):
         return directory
 
     def results_file(self, day: int) -> Path:
-        return self.results_dir / f'day{day}_seed-{self.seed}_results.pckl'
+        return self.results_dir / f'day{day}_{self.seed}_{self.setting}_results.pckl'
 
     def model_file(self, day: int) -> Path:
-        return self.model_dir / f'day{day}_{self.seed}_model.h5'
+        return self.model_dir / f'day{day}_{self.seed}_{self.setting}_model.h5'
+
+    def local_model_file(self, day: int, client_id: int) -> Path:
+        return self.model_dir / f'day{day}_{self.seed}_{self.setting}_{client_id}_model.h5'
 
     def scaler_file(self, day: int) -> Path:
-        return self.model_dir / f'day{day}_{self.seed}_scaler.pckl'
+        return self.model_dir / f'day{day}_{self.seed}_{self.setting}_scaler.pckl'
 
     def spheres_file(self, day: int) -> Path:
-        return self.model_dir / f'day{day}_{self.seed}_spheres.pckl'
+        return self.model_dir / f'day{day}_{self.seed}_{self.setting}_spheres.pckl'
 
     def local_epochs(self, rnd: int) -> int:
         epoch_config = {int(key): value for key, value in dict(self.server.local_epochs).items()}
@@ -69,11 +77,15 @@ class Config(ConfigTree):
 
     def client_malware(self, client_id: int, day: int) -> Optional[Path]:
         malware = {int(key): value for key, value in self.client.client_malware.items()}
-        if client_id not in malware:
+        if client_id not in malware or malware[client_id][day-1][0] == '_':
             return None
 
-        malware_id = malware[client_id][day-1]
-        return self.malware_dir / self.malware_dirs[malware_id] / f'Day{day}'
+        malware = malware[client_id][day-1]
+        if '_' in malware:
+            malware_id, malware_day = malware.split('_')
+        else:
+            malware_id, malware_day = malware, day
+        return self.malware_dir / self.malware_dirs[malware_id] / f'Day{malware_day}'
 
     def vaccine(self, day: int) -> Path:
         malware_id, malware_day = self.server.vaccine_malware[day-1].split('_')

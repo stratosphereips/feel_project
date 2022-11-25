@@ -1,6 +1,8 @@
 import pickle
 import warnings
+from collections import defaultdict
 
+from flwr.common import Metrics
 from sklearn.metrics import classification_report
 
 from common.CustomFedAdam import CustomFedAdam
@@ -21,10 +23,12 @@ import fire
 from common.config import Config
 
 
-class AggregateCustomMetricStrategy(CustomFedAdam):
+class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
     def __init__(self, day, config, **kwds):
         kwds['on_fit_config_fn'] = self.fit_config
         kwds['on_evaluate_config_fn'] = self.evaluate_config
+        kwds['evaluate_metrics_aggregation_fn'] = self.evaluate_metrics
+        kwds['fit_metrics_aggregation_fn'] = self.evaluate_metrics
         super().__init__(**kwds)
         self.day = day
         self.config = config
@@ -65,7 +69,6 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
             self.scaler = sum((MinMaxScaler.load(r.metrics['scaler']) for _, r in results), start=MinMaxScaler())
             with self.config.scaler_file(self.day).open('wb') as fb:
                 pickle.dump(self.scaler, fb)
-
 
         self.epoch += self.config.local_epochs(server_round)
 
@@ -153,6 +156,42 @@ class AggregateCustomMetricStrategy(CustomFedAdam):
 
         return config
 
+    @staticmethod
+    def evaluate_metrics(client_metrics: List[Tuple[int, Metrics]]) -> Metrics:
+        metrics = {}
+        # consistent ordering so that weighted average makes sense
+        client_metrics.sort(key=lambda x: x[0])
+
+        client_examples = np.array([num_examples for num_examples, _ in client_metrics])
+
+        metrics_transpose = defaultdict(list)
+        for _, m in client_metrics:
+            for metric_name, metric_value in m.items():
+                metrics_transpose[metric_name].append(metric_value)
+        metrics_transpose = {
+            metric_name: np.array(metric_values)
+            for metric_name, metric_values
+            in metrics_transpose.items()
+        }
+        ignore_set = {'id', 'scaler', 'proxy_spheres', 'tracker', 'confusion_matrix'}
+
+        for metric_name, metric_values in metrics_transpose.items():
+            if metric_name in ignore_set:
+                continue
+            if np.issubdtype(metric_values.dtype, np.integer):
+                metrics[metric_name] = metric_values.sum()
+            else:
+                metrics[metric_name] = np.average(metric_values, weights=client_examples)
+
+        matrix_metrics = {'tp', 'tn', 'fp', 'fn'}
+        for matrix_el in matrix_metrics:
+            for _, client_m in client_metrics:
+                if matrix_el not in client_m:
+                    continue
+                metrics[f'{matrix_el}_{client_m["id"]:02}'] = client_m[matrix_el]
+
+        return metrics
+
 
 def main(
         day: int,
@@ -215,7 +254,7 @@ def get_eval_fn(model, day, data_dir):
             config: Dict[str, fl.common.Scalar]
     ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
         model.set_weights(parameters)  # Update model with the latest parameters
-        threshold = config['threshold']
+        threshold = config['threshold'] if config else 100
 
         if server_round > 1:
             with open(f'round-1-scaler.pckl', 'rb') as f:

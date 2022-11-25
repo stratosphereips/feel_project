@@ -4,7 +4,7 @@ import warnings
 import fire
 from sklearn.metrics import confusion_matrix
 
-from common.config import Config
+from common.config import Config, Setting
 
 warnings.filterwarnings('ignore')
 
@@ -14,8 +14,9 @@ import tensorflow as tf
 import numpy as np
 
 import flwr as fl
+from flwr.common.logger import logger
 from common.utils import get_threshold, MinMaxScaler, serialize, client_malware_map
-from common.data_loading import load_mal_data, load_ben_data
+from common.data_loading import load_mal_data, load_ben_data, load_day_dataset
 from common.models import MultiHeadAutoEncoder
 from sklearn.model_selection import train_test_split
 import os
@@ -54,10 +55,14 @@ class ADClient(fl.client.NumPyClient):
         """Train parameters on the locally held training set."""
 
         # Update local model parameters
-        self.model.set_weights(parameters)
+        if not self.config.setting == Setting.FEDERATED:
+            logger.info("Setting weights")
+            self.model.set_weights(parameters)
+        else:
+            logger.info("Training locally only, ignoring new weights")
 
         # Get hyperparameters for this round
-        batch_size: int = self.config.batch_size
+        batch_size: int = self.config.client.batch_size
         start_epoch: int = config['start_epoch']
         epochs: int = config["local_epochs"]
 
@@ -93,6 +98,7 @@ class ADClient(fl.client.NumPyClient):
         parameters_prime = self.model.get_weights()
         num_examples_train = len(X_train)
         results = {
+            "id": self.client_id,
             "loss": loss,
             # "accuracy": history.history["accuracy"][0],
             "val_loss": val_loss,
@@ -107,7 +113,11 @@ class ADClient(fl.client.NumPyClient):
         """Evaluate parameters on the locally held test set."""
 
         # Update local model with global parameters
-        self.model.set_weights(parameters)
+        if not self.config.setting == Setting.FEDERATED:
+            logger.info("Setting weights")
+            self.model.set_weights(parameters)
+        else:
+            logger.info("Training locally only, ignoring new weights")
 
         if 'scaler' in config:
             self.scaler = MinMaxScaler.load(config["scaler"])
@@ -125,36 +135,41 @@ class ADClient(fl.client.NumPyClient):
         rec_ben = self.model.predict(X_test_ben_)[:, :-1]
         mse_ben = np.mean(np.power(X_test_ben_ - rec_ben, 2), axis=1)
 
-        rec_mal = dict()
-        mse_mal = dict()
-
-        for folder in list(self.X_test_mal.keys()):
-            if folder != client_malware_map[self.client_id]:
-                continue
-            X_test_mal_ = self.scaler.transform(self.X_test_mal[folder])
-            rec_mal[folder] = self.model.predict(X_test_mal_)[:, :-1]
-            mse_mal[folder] = np.mean(np.power(X_test_mal_ - rec_mal[folder], 2), axis=1)
-
-        # Detect all the samples which are anomalies.
+        # rec_mal = dict()
+        # mse_mal = dict()
         y_ben = mse_ben > self.threshold
         anomalies_ben = sum(y_ben)
         y_pred = y_ben.tolist()
-        y_true = np.zeros_like(y_ben).tolist()
+
+        num_malware = self.X_test_mal.shape[0]
         anomalies_mal = 0
-        for folder in list(self.X_test_mal.keys()):
-            if folder != client_malware_map[self.client_id]:
-                continue
-            y_mal = mse_mal[folder] > self.threshold
+        y_pred = y_ben.tolist()
+        y_true = np.zeros_like(y_ben).tolist()
+
+        if num_malware > 0:
+            X_test_mal_ = self.scaler.transform(self.X_test_mal).astype('float32')
+            rec_mal = self.model.predict(X_test_mal_)[:, :-1]
+            mse_mal = np.mean(np.power(X_test_mal_ - rec_mal, 2), axis=1)
+
+            y_mal = mse_mal > self.threshold
             anomalies_mal += sum(y_mal)
             y_pred += y_mal.tolist()
             y_true += np.ones_like(y_mal).tolist()
+        # for folder in list(self.X_test_mal.keys()):
+        #     if folder != client_malware_map[self.client_id]:
+        #         continue
+        #     X_test_mal_ = self.scaler.transform(self.X_test_mal[folder])
+        #     rec_mal[folder] = self.model.predict(X_test_mal_)[:, :-1]
+        #     mse_mal[folder] = np.mean(np.power(X_test_mal_ - rec_mal[folder], 2), axis=1)
+
+        # Detect all the samples which are anomalies.
 
         y_pred = np.array(y_pred)
         y_true = np.array(y_true)
 
-        num_malware = 0
-        for folder in list(self.X_test_mal.keys()):
-            num_malware += self.X_test_mal[folder].shape[0]
+
+        # for folder in list(self.X_test_mal.keys()):
+        #     num_malware += self.X_test_mal[folder].shape[0]
 
         fp = int(anomalies_ben)
         tp = int(anomalies_mal)
@@ -162,22 +177,27 @@ class ADClient(fl.client.NumPyClient):
         fn = num_malware - tp
 
         accuracy = (tp + tn) / (num_examples_test + num_malware)
-        tpr = tp / num_malware
+        tpr = (tp / num_malware) if num_malware else 1.0
         fpr = fp / num_examples_test
 
         conf_matrix = confusion_matrix(y_true, y_pred)
 
         return loss, int(num_examples_test + num_malware), {
+            "id": self.client_id,
             "anomalies_ben": int(anomalies_ben),
             "anomalies_mal": int(anomalies_mal),
             "accuracy": (y_true == y_pred).mean(),
             "tpr": tpr,
             "fpr": fpr,
-            "confusion_matrix": serialize(conf_matrix)
+            "confusion_matrix": serialize(conf_matrix),
+            "fp": fp,
+            "tp": tp,
+            "tn": tn,
+            "fn": fn
         }
 
 
-def main(day, client_id: int, config_path: str = None, **overrides) -> None:
+def main(client_id: int, day: int, config_path: str = None, **overrides) -> None:
     config = Config.load(config_path, **overrides)
     # Parse command line arguments
     tf.keras.utils.set_random_seed(config.seed)
@@ -186,7 +206,7 @@ def main(day, client_id: int, config_path: str = None, **overrides) -> None:
     model = MultiHeadAutoEncoder(config)
     model.compile()
 
-    X_train, X_test_ben, X_test_mal = load_partition(day, client_id, Path(config.data_dir))
+    X_train, X_test_ben, X_test_mal = load_partition(day, client_id, config)
 
     # Start Flower client
     client = ADClient(model, X_train, X_test_ben, X_test_mal, client_id, config)
@@ -198,14 +218,13 @@ def main(day, client_id: int, config_path: str = None, **overrides) -> None:
     )
 
 
-def load_partition(day: int, client_id: int, data_dir: Path):
+def load_partition(day: int, client_id: int, config: Config):
     """Load the training and test data to simulate a partition."""
     assert client_id in range(1, 11)
     assert day in range(1, 6)
 
-    X_train, X_test_ben = load_ben_data(day, client_id, data_dir)
-    X_test_mal = load_mal_data(1, data_dir)
-
+    X_train, X_test_ben = load_ben_data(day, client_id, config.data_dir)
+    X_test_mal = load_day_dataset(config.client_malware(client_id, day+1), drop_labels=True)
     print(f"[+] Num train samples for client{client_id}: {X_train.shape[0]}")
     print(f"[+] Num of features for client{client_id}: {X_train.shape[1]}")
     return X_train, X_test_ben, X_test_mal

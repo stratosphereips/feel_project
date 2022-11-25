@@ -7,7 +7,7 @@ import central_scenario
 import fire
 
 
-class SupervisedExperiment(BaseExperiment):
+class AnomalyDetectionExperiment(BaseExperiment):
     @property
     def server_target(self):
         return server.main
@@ -22,7 +22,7 @@ class SupervisedExperiment(BaseExperiment):
 
 
 def main(config_path: str):
-    exp = SupervisedExperiment(Path(config_path))
+    exp = AnomalyDetectionExperiment(Path(config_path))
     exp.run()
 
 
