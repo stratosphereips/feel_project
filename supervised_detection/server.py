@@ -314,15 +314,19 @@ def main(day: int, config_path: str = None, **overrides) -> None:
     else:
         num_rounds = config.server.num_rounds_first_day
 
-    print(f"{config.num_fit_clients=}")
+    if config.fit_if_no_malware:
+        num_fit_clients = 6 if day == 1 else 4
+    else:
+        num_fit_clients = 10
+    print(f"{num_fit_clients=}")
 
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
         day=day,
         config=config,
-        fraction_fit=config.num_fit_clients / config.num_evaluate_clients,
+        fraction_fit=num_fit_clients / config.num_evaluate_clients,
         fraction_evaluate=1.0,
-        min_fit_clients=config.num_fit_clients,
+        min_fit_clients=num_fit_clients,
         min_evaluate_clients=config.num_evaluate_clients,
         min_available_clients=config.num_evaluate_clients,
         evaluate_fn=get_eval_fn(model, day, config),

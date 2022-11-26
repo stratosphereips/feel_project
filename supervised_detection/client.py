@@ -49,6 +49,8 @@ class ADClient(fl.client.NumPyClient):
         self.y_val = y_val
         self.y_test = y_test
 
+        self.has_own_malware = y_train.sum() > 0
+
         self.scaler = MinMaxScaler()
         self.scaler.fit(self.X_train)
 
@@ -66,6 +68,9 @@ class ADClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         """Train parameters on the locally held training set."""
+        if not self.config.fit_if_no_malware and not self.has_own_malware:
+            return
+
         mal_dataset = deserialize(config['mal_dataset'])
 
         X_train, X_val, y_train, y_val = self.prepare_local_dataset(mal_dataset)

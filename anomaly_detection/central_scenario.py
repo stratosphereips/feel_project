@@ -111,7 +111,7 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
         self.y_test = y_test
         self.model = model
         self.best_weights = None
-        self.best_loss = None
+        self.best_loss = np.inf
 
     def on_epoch_end(self, epoch, logs=None):
         total_loss = logs['val_total_loss']

@@ -59,8 +59,12 @@ def create_supervised_dataset(df_ben: pd.DataFrame, df_mal: pd.DataFrame, test_r
 
 
 def load_centralized_data(day: int, config: Config, train_malicious=True):
+    if 'num_fit_clients' in config:
+        num_fit_clients = config.num_fit_clients
+    else:
+        num_fit_clients = 10 if config.fit_if_no_malware else 6
     ben_train, mal_train = zip(
-        *[load_client_dataset(day, client, config) for client in range(1, config.num_fit_clients+1)]
+        *[load_client_dataset(day, client, config) for client in range(1, num_fit_clients+1)]
     )
     X_ben_train = pd.concat(ben_train, axis=0)
     X_mal_train = pd.concat(mal_train, axis=0) if train_malicious else pd.DataFrame()

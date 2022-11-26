@@ -53,6 +53,8 @@ class ADClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         """Train parameters on the locally held training set."""
+        if self.client_id > self.config.num_fit_clients:
+            return
 
         # Update local model parameters
         if not self.config.setting == Setting.FEDERATED:

@@ -21,11 +21,16 @@ class BaseExperiment:
             with self.config_with_random_seed(run) as config_path:
                 for day in range(1, self.config.days + 1):
                     self.run_day(day, config_path)
-                for day in range(1, self.config.days + 1):
-                    self.run_day(day, config_path, local=True)
+
+                if self.config.evaluate_local_setting:
+                    for day in range(1, self.config.days + 1):
+                        self.run_day(day, config_path, local=True)
+
                 for day in range(1, self.config.days + 1):
                     self.run_centralized(day, config_path)
 
+        done_file: Path = self.config.experiment_dir / 'done'
+        done_file.write_text('DONE')
 
     def run_day(self, day: int, config_path: Path, local=False):
         kwargs = {'setting': Setting.LOCAL.value if local else Setting.FEDERATED.value}

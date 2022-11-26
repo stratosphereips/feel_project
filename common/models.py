@@ -3,7 +3,6 @@ from itertools import zip_longest
 from typing import Optional, List
 
 import tensorflow as tf
-import tensorflow_addons as tfa
 from pathlib import Path
 import numpy as np
 from copy import deepcopy
@@ -112,7 +111,7 @@ class MultiHeadAutoEncoder(tf.keras.Model):
         self.classifier = Classifier(config.model.classifier_hidden, 2)
         self.classifier.trainable = not self.disable_classifier
 
-
+        self.spheres = None
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=config.model.learning_rate)
 
         self.loss = MultiHeadLoss(
@@ -460,8 +459,7 @@ def _add_classification_layers(model: tf.keras.Sequential, n_classes=2, encoder_
         for layer in model.layers[:]:
             layer.trainable = False
 
-    encoder_optimizer = tf.keras.optimizers.Adam(learning_rate=encoder_lr)
-    classifier_optimizer = tf.keras.optimizers.Adam(learning_rate=classifier_lr)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=encoder_lr)
 
     layers_before = len(model.layers)
 
@@ -473,12 +471,7 @@ def _add_classification_layers(model: tf.keras.Sequential, n_classes=2, encoder_
 
     classifier_layers = len(model.layers) - layers_before
 
-    multi_optimizer = tfa.optimizers.MultiOptimizer([
-        (encoder_optimizer, model.layers[:-classifier_layers]),
-        (classifier_optimizer, model.layers[-classifier_layers:])
-    ])
-
-    model.compile(optimizer=multi_optimizer,
+    model.compile(optimizer=optimizer,
                   loss='bce' if n_classes == 2
                   else 'cce')
 

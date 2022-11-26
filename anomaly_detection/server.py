@@ -15,7 +15,7 @@ from pathlib import Path
 import flwr as fl
 import tensorflow as tf
 import numpy as np
-from common.utils import MinMaxScaler, pprint_cm, deserialize
+from common.utils import MinMaxScaler, pprint_cm, deserialize, serialize
 from common.models import MultiHeadAutoEncoder
 from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset
 import pandas as pd
@@ -150,9 +150,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             # "proxy_spheres": serialize(self.proxy_spheres)
         }
         if rnd > 1:
-            with open('round-1-scaler.pckl', 'rb') as f:
-                scaler = pickle.load(f)
-                config['scaler'] = scaler.dump()
+            config['scaler'] = serialize(self.scaler)
 
         return config
 
@@ -221,7 +219,7 @@ def main(
         min_fit_clients=config.num_fit_clients,
         min_evaluate_clients=config.num_evaluate_clients,
         min_available_clients=config.num_evaluate_clients,
-        evaluate_fn=get_eval_fn(model, day, Path(config.data_dir)),
+        evaluate_fn=get_eval_fn(model, day, config),
         initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),
         eta=config.server.learning_rate
     )
@@ -242,10 +240,10 @@ def main(
         pickle.dump(hist, f)
 
 
-def get_eval_fn(model, day, data_dir):
+def get_eval_fn(model, day, experiment_config: Config):
     """Return an evaluation function for server-side evaluation."""
 
-    X_test, y_test = load_data(data_dir, day)
+    X_test, y_test = load_data(experiment_config.data_dir, day)
 
     # The `evaluate` function will be called after every round
     def evaluate(
@@ -257,7 +255,7 @@ def get_eval_fn(model, day, data_dir):
         threshold = config['threshold'] if config else 100
 
         if server_round > 1:
-            with open(f'round-1-scaler.pckl', 'rb') as f:
+            with experiment_config.scaler_file(day).open('rb') as f:
                 scaler = pickle.load(f)
         else:
             scaler = MinMaxScaler().from_min_max(-10 * np.ones(36), 10 * np.ones(36))
