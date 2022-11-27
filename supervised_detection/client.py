@@ -57,6 +57,7 @@ class ADClient(fl.client.NumPyClient):
         self.seed = config.seed
         self.proxy_radius_mult = config.client.proxy_radius_mult
         self.config = config
+        self.threshold = 1000
 
     def get_properties(self, config):
         """Get properties of client."""

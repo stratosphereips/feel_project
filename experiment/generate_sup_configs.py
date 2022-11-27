@@ -52,6 +52,7 @@ def main():
         config = {}
         config[var1.name] = v1_value
         exp_id = f'{config_prefix}v1_{v1_value}'
+        config['id'] = exp_id
         write_conf(config, sup_dir / f'{exp_id}.conf')
 
         config_ = deepcopy(config)
