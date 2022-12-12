@@ -8,12 +8,12 @@ from pyhocon import ConfigTree, HOCONConverter
 @dataclasses.dataclass
 class Variable:
     name: str
-    positive: Any
-    negative: Any
+    default: Any
+    override: Any
 
     def values(self):
-        return {'+': self.positive,
-                '-': self.negative}.items()
+        return {'+': self.default,
+                '-': self.override}.items()
 
 
 var1 = Variable(
@@ -22,7 +22,7 @@ var2 = Variable(
     'load',
     True, False)
 var3 = Variable(
-    'fit_if_no_malware', False, True)
+    'fit_if_no_malware', True, False)
 var4 = Variable(
     'client.client_malware',
     """{
@@ -37,7 +37,7 @@ var4 = Variable(
       1: [_, M1_2, ____, M1_4, M1_5]
       2: [_, ____, ____, M2_4, M2_5]
       3: [_, ____, ____, ____, M3_1]
-      4: [_, ____, M4_3, ____, M4_5]
+      4: [_, ____, M4_3, M4_4, M4_5]
       5: [_, M5_1, ____, ____, ____]
       6: [_, ____, M6_3, ____, M6_5]
     }"""
@@ -56,23 +56,24 @@ def main():
         write_conf(config, sup_dir / f'{exp_id}.conf')
 
         config_ = deepcopy(config)
-        exp_id_ = f'{exp_id}_v2_{var2.positive}'
-        config_[var2.name] = var2.positive
+        exp_id_ = f'{exp_id}_v2_{var2.override}'
+        config_[var2.name] = var2.override
         config_['id'] = exp_id_
         write_conf(config_, sup_dir / f'{exp_id_}.conf')
 
         config_ = deepcopy(config)
-        exp_id_ = f'{exp_id}_v3_{var3.positive}'
-        config_[var3.name] = var3.positive
+        exp_id_ = f'{exp_id}_v3_{var3.override}'
+        config_[var3.name] = var3.override
         config_['id'] = exp_id_
-        config_['evaluate_local_setting'] = False
         write_conf(config_, sup_dir / f'{exp_id_}.conf')
 
-        config_ = deepcopy(config)
-        exp_id_ = f'{exp_id}_v4_scenario'
-        config_[var4.name] = var4.positive
-        config_['id'] = exp_id_
-        write_conf(config_, sup_dir / f'{exp_id_}.conf')
+        for v2, v2_value in var2.values():
+            config_ = deepcopy(config)
+            exp_id_ = f'{exp_id}_v2_{v2_value}_v4_scenario'
+            config_[var2.name] = v2_value
+            config_[var4.name] = var4.override
+            config_['id'] = exp_id_
+            write_conf(config_, sup_dir / f'{exp_id_}.conf')
 
 
 def write_conf(config, file):

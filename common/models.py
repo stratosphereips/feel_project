@@ -112,7 +112,10 @@ class MultiHeadAutoEncoder(tf.keras.Model):
         self.classifier.trainable = not self.disable_classifier
 
         self.spheres = None
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=config.model.learning_rate)
+        if config.model.optimizer == 'Adam':
+            self.optimizer = tf.keras.optimizers.Adam(learning_rate=config.model.learning_rate)
+        elif config.model.optimizer == 'SGD':
+            self.optimizer = tf.keras.optimizers.SGD(learning_rate=config.model.learning_rate)
 
         self.loss = MultiHeadLoss(
             self.tracker,
@@ -170,7 +173,7 @@ class MultiHeadAutoEncoder(tf.keras.Model):
                 if not w.any():
                     continue
                 prox_loss += tf.norm(w - w_t)
-            prox_loss *= self.mu
+            prox_loss *= self.mu * 0.5
             self.tracker.proximal.update_state(prox_loss)
             self.add_loss(prox_loss)
 
@@ -190,7 +193,7 @@ class MultiHeadAutoEncoder(tf.keras.Model):
         reconstructed = self.decoder(z)
         y_pred = self.classifier(z)
 
-        return tf.concat([reconstructed, y_pred], axis=1).numpy()
+        return tf.concat([reconstructed, y_pred], axis=1)#.numpy()
 
     def embed(self, inputs):
         embedded = self.encoder(inputs)
@@ -294,11 +297,12 @@ class MultiHeadLoss(tf.keras.losses.Loss):
         """
         total_loss = 0
         if self.variational:
-            z_mean = inputs_pred[:, -4:-2]
-            z_log_var = inputs_pred[:, -2:]
-            inputs_pred = inputs_pred[:, :-4]
-            kl_loss = -0.5 * (1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
-            kl_loss = tf.reduce_mean(tf.reduce_sum(kl_loss, axis=1))
+            latent_dim = 10
+            z_mean = inputs_pred[:, -2*latent_dim:-latent_dim]
+            z_log_var = inputs_pred[:, -latent_dim:]
+            inputs_pred = inputs_pred[:, :-2*latent_dim]
+            kl_loss = 0.5 * (tf.reduce_sum(tf.square(z_mean), axis=1) + tf.reduce_sum(tf.exp(z_log_var), axis=1) - tf.reduce_sum(z_log_var, axis=1) - 1)
+            kl_loss = tf.reduce_mean(kl_loss)
             self.tracker.kl.update_state(kl_loss)
             total_loss += kl_loss
 

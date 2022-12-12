@@ -47,7 +47,7 @@ def main(day: int, config=None, **overrides):
     tf.keras.utils.set_random_seed(config.seed)
     model = MultiHeadAutoEncoder(config)
     model.compile()
-    if config.load() and day > 1 and config.model_file(day - 1).exists():
+    if config.load_model and day > 1 and config.model_file(day - 1).exists():
         model.load_weights(config.model_file(day - 1))
         epochs = config.server.num_rounds_other_days
     else:
@@ -56,7 +56,7 @@ def main(day: int, config=None, **overrides):
     #get_classification_model(Path(model_path), 2, encoder_lr=1e-4, classifier_lr=1e-4)
     X_train, X_val, X_test, y_train, y_val, y_test = create_dataset(day, config)
     
-    EPOCHS = epochs
+    EPOCHS = sum(config.local_epochs(round) for round in range(1, epochs+1))
     BATCH_SIZE = config.client.batch_size
 
     scaler = MinMaxScaler().fit(X_train)
@@ -203,6 +203,10 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
         ad_fp = int((anomalies_true == 0).sum())
         ad_tp = int((anomalies_true == 1).sum())
 
+        anomalies_false = self.y_test[y_anomaly_pred == 0]
+        ad_tn = int((anomalies_false == 0).sum())
+        ad_fn = int((anomalies_false == 1).sum())
+
         ad_tpr = (ad_tp / num_malware) if num_malicious else np.nan
         ad_fpr = ad_fp / num_benign
 
@@ -217,6 +221,8 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
             "class_accuracy": cls_acc,
             'ad_fp': ad_fp,
             'ad_tp': ad_tp,
+            'ad_tn': ad_tn,
+            'ad_fn': ad_fn,
             'ad_tpr': ad_tpr,
             'ad_fpr': ad_fpr,
             'ad_acc': ad_accuracy,

@@ -5,7 +5,7 @@ from collections import defaultdict
 from copy import deepcopy
 
 from common.CustomFedAdam import CustomFedAdam
-from common.config import Config
+from common.config import Config, Setting
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -33,6 +33,8 @@ import pickle
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
+from tensorflow.python.ops.numpy_ops import np_config
+np_config.enable_numpy_behavior()
 
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
@@ -61,6 +63,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
             failures: List[BaseException],
     ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        results = [(proxy, r) for proxy, r in results if r.num_examples != 0]
         results = sorted(results, key=lambda result: result[1].metrics['id'])
         if server_round == 1:
             self.scaler = sum((MinMaxScaler.load(r.metrics['scaler']) for _, r in results), start=MinMaxScaler())
@@ -181,9 +184,15 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         cls_fprs = np.mean([1 - r.metrics["cls_fpr"] for _, r in results if r != None])
         print(f"[*] Round {server_round} FPR avg from client results: {100 * cls_fprs:.2f}%")
 
-        conf_matrices = np.array([deserialize(result.metrics['confusion_matrix']) for _, result in results])
-        conf_matrix = conf_matrices.sum(axis=0)
-        pprint_cm(conf_matrix, ['Benign', 'Malicious'])
+        if self.config.setting == Setting.LOCAL:
+            g_conf_matrices = np.array([deserialize(result.metrics['global_confusion_matrix']) for _, result in results])
+            g_conf_matrix = g_conf_matrices.mean(axis=0)
+            pprint_cm(g_conf_matrix, ['Benign', 'Malicious'])
+        else:
+            conf_matrices = np.array([deserialize(result.metrics['confusion_matrix']) for _, result in results])
+            conf_matrix = conf_matrices.sum(axis=0)
+            pprint_cm(conf_matrix, ['Benign', 'Malicious'])
+
 
         print("===============================\n   Anomaly detection Results   \n===============================")
         ad_fp = np.sum([r.metrics["ad_fp"] for _, r in results if r != None])
@@ -227,7 +236,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
     def fit_config(self, rnd: int):
         """
         """
-        mal_data = load_day_dataset(self.config.vaccine(self.day))
+        mal_data = load_day_dataset(self.config.vaccine(self.day)) if self.config.vaccine(self.day) else pd.DataFrame()
         config = {
             "start_epoch": self.epoch,
             "local_epochs": self.config.local_epochs(rnd),  # 1 if rnd < 2 else 2,
@@ -272,6 +281,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             in metrics_transpose.items()
         }
         ignore_set = {'id', 'scaler', 'proxy_spheres', 'tracker', 'confusion_matrix'}
+        ignore_set.update([f'global_{x}' for x in ignore_set])
 
         for metric_name, metric_values in metrics_transpose.items():
             if metric_name in ignore_set:
@@ -281,7 +291,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             else:
                 metrics[metric_name] = np.average(metric_values, weights=client_examples)
 
-        matrix_metrics = {'tp', 'tn', 'fp', 'fn'}
+        matrix_metrics = {'cls_tp', 'cls_tn', 'cls_fp', 'cls_fn', 'ad_tp', 'ad_tn', 'ad_fp', 'ad_fn', 'ad_tp', 'ad_tn', 'ad_fp', 'ad_fn', 'val_loss'}
         for matrix_el in matrix_metrics:
             for _, client_m in client_metrics:
                 if matrix_el not in client_m:
@@ -308,25 +318,24 @@ def main(day: int, config_path: str = None, **overrides) -> None:
     model = MultiHeadAutoEncoder(config)
     model.compile()
 
-    if config.load and day > 1 and config.model_file(day - 1).exists():
+    if config.load_model and day > 1:
         model.load_weights(config.model_file(day - 1))
         num_rounds = config.server.num_rounds_other_days
     else:
         num_rounds = config.server.num_rounds_first_day
 
     if config.fit_if_no_malware:
-        num_fit_clients = 6 if day == 1 else 4
-    else:
         num_fit_clients = 10
+    else:
+        num_fit_clients = 6 if day == 1 else 4
     print(f"{num_fit_clients=}")
 
     # Create custom strategy that aggregates client metrics
     strategy = AggregateCustomMetricStrategy(
         day=day,
         config=config,
-        fraction_fit=num_fit_clients / config.num_evaluate_clients,
         fraction_evaluate=1.0,
-        min_fit_clients=num_fit_clients,
+        min_fit_clients=config.num_evaluate_clients,
         min_evaluate_clients=config.num_evaluate_clients,
         min_available_clients=config.num_evaluate_clients,
         evaluate_fn=get_eval_fn(model, day, config),
@@ -352,6 +361,7 @@ def main(day: int, config_path: str = None, **overrides) -> None:
     # plot_embedding(X_test, y_test, model)
 
     model.set_weights(strategy.best_val_params)
+
     results.metrics_centralized['best_round'] = strategy.best_round
     results.val_losses_distributed = strategy.val_losses
     results.val_acc_distributed = strategy.val_acc

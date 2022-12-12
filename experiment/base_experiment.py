@@ -22,18 +22,70 @@ class BaseExperiment:
                 for day in range(1, self.config.days + 1):
                     self.run_day(day, config_path)
 
+                for day in range(1, self.config.days + 1):
+                    self.run_centralized(day, config_path)
+
                 if self.config.evaluate_local_setting:
                     for day in range(1, self.config.days + 1):
                         self.run_day(day, config_path, local=True)
 
-                for day in range(1, self.config.days + 1):
-                    self.run_centralized(day, config_path)
-
         done_file: Path = self.config.experiment_dir / 'done'
         done_file.write_text('DONE')
 
+    def rerun_local(self):
+        assert self.config.experiment_dir.exists()
+
+        for run in range(self.config.num_runs):
+            exp_dir = self.config.experiment_dir / 'results' / f'{run:02}'
+            _, seed, *_ = list(exp_dir.iterdir())[0].name.split('_')
+            seed = int(seed)
+            with self.config_with_random_seed(run, seed) as config_path:
+                if self.config.evaluate_local_setting:
+                    for day in range(1, self.config.days + 1):
+                        self.run_day(day, config_path, local=True)
+
+        done_file: Path = self.config.experiment_dir / 'done_local'
+        done_file.write_text('DONE')
+
+    def rerun_centralized(self):
+        assert self.config.experiment_dir.exists()
+
+        for run in range(self.config.num_runs):
+            exp_dir = self.config.experiment_dir / 'results' / f'{run:02}'
+            _, seed, *_ = list(exp_dir.iterdir())[0].name.split('_')
+            seed = int(seed)
+            with self.config_with_random_seed(run, seed) as config_path:
+                for day in range(1, self.config.days + 1):
+                    self.run_centralized(day, config_path)
+
+        done_file: Path = self.config.experiment_dir / 'done_local'
+        done_file.write_text('DONE')
+
+    def rerun_federated(self):
+        assert self.config.experiment_dir.exists()
+
+        for run in range(self.config.num_runs):
+            exp_dir = self.config.experiment_dir / 'results' / f'{run:02}'
+            _, seed, *_ = list(exp_dir.iterdir())[0].name.split('_')
+            seed = int(seed)
+            with self.config_with_random_seed(run, seed) as config_path:
+                if self.config.evaluate_local_setting:
+                    for day in range(1, self.config.days + 1):
+                        self.run_day(day, config_path)
+
+        done_file: Path = self.config.experiment_dir / 'done_federated'
+        done_file.write_text('DONE')
+
     def run_day(self, day: int, config_path: Path, local=False):
-        kwargs = {'setting': Setting.LOCAL.value if local else Setting.FEDERATED.value}
+        if local:
+            kwargs = {
+                'setting': Setting.LOCAL.value,
+                'model.proximal': False,
+                'model.optimizer': 'Adam'
+              }
+        else:
+            kwargs = {'setting': Setting.FEDERATED.value}
+
         server_process = Process(
             target=self.server_target,
             args=(day, config_path),
@@ -64,7 +116,9 @@ class BaseExperiment:
         local_process = Process(
             target=self.centralized_target,
             args=(day, config_path),
-            kwargs={'setting': Setting.CENTRALIZED.value}
+            kwargs={'setting': Setting.CENTRALIZED.value,
+                    'model.optimizer': 'Adam',
+                    'model.proximal': False}
         )
         print(f"Starting centralized for day {day}")
         local_process.start()
@@ -72,8 +126,8 @@ class BaseExperiment:
         print(f"Centralized for day {day} terminated")
 
     @contextmanager
-    def config_with_random_seed(self, run_num):
-        seed = random.randint(0, int(1e9))
+    def config_with_random_seed(self, run_num, seed=None):
+        seed = random.randint(0, int(1e9)) if seed is None else seed
         new_config_path = self.config_path.parent / f'{self.config_path.name}_{seed:09}{self.config_path.suffix}'
 
         new_config = self.config.copy()

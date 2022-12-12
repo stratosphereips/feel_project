@@ -42,6 +42,8 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
             failures: List[BaseException],
     ) -> Optional[fl.common.Parameters]:
+        results = [(proxy, r) for proxy, r in results if r.num_examples != 0]
+
         aggregated_weights = super().aggregate_fit(server_round, results, failures)
         # if aggregated_weights is not None and server_round == 9:
         #     # Save aggregated_weights on the final round
@@ -172,6 +174,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             in metrics_transpose.items()
         }
         ignore_set = {'id', 'scaler', 'proxy_spheres', 'tracker', 'confusion_matrix'}
+        ignore_set.update([f'global_{x}' for x in ignore_set])
 
         for metric_name, metric_values in metrics_transpose.items():
             if metric_name in ignore_set:
@@ -179,7 +182,9 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             if np.issubdtype(metric_values.dtype, np.integer):
                 metrics[metric_name] = metric_values.sum()
             else:
-                metrics[metric_name] = np.average(metric_values, weights=client_examples)
+                finite_client_examples = client_examples[np.isfinite(metric_values)]
+                metric_values = metric_values[np.isfinite(metric_values)]
+                metrics[metric_name] = np.average(metric_values, weights=finite_client_examples)
 
         matrix_metrics = {'tp', 'tn', 'fp', 'fn'}
         for matrix_el in matrix_metrics:
@@ -203,7 +208,7 @@ def main(
     tf.keras.utils.set_random_seed(config.seed)
     model = MultiHeadAutoEncoder(config)
     model.compile()
-    if config.load and day > 1 and config.model_file(day-1).exists():
+    if config.load_model and day > 1 and config.model_file(day-1).exists():
         model.load_weights(config.model_file(day-1))
         num_rounds = config.server.num_rounds_other_days
     else:
@@ -214,9 +219,8 @@ def main(
     strategy = AggregateCustomMetricStrategy(
         day=day,
         config=config,
-        fraction_fit=frac_fit,
         fraction_evaluate=1.0,
-        min_fit_clients=config.num_fit_clients,
+        min_fit_clients=config.num_evaluate_clients,
         min_evaluate_clients=config.num_evaluate_clients,
         min_available_clients=config.num_evaluate_clients,
         evaluate_fn=get_eval_fn(model, day, config),

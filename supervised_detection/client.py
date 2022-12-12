@@ -2,6 +2,7 @@ import datetime
 import warnings
 
 import pandas as pd
+from flwr.common import parameters_to_ndarrays
 from sklearn.model_selection import train_test_split
 
 from common.config import Config, Setting
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import flwr as fl
 from flwr.common.logger import logger
-from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset, load_day_dataset
+from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset, load_day_dataset, load_centralized_data
 from common.models import get_classification_model, MultiHeadAutoEncoder
 from common.utils import get_threshold, serialize_array, \
     deserialize_string, client_malware_map, MinMaxScaler, serialize, deserialize
@@ -34,7 +35,20 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 # Define Flower client
 class ADClient(fl.client.NumPyClient):
-    def __init__(self, client_id, model, X_train, X_val, X_test, y_train, y_val, y_test, config):
+    def __init__(
+            self,
+            client_id,
+            model,
+            X_train,
+            X_val,
+            X_test,
+            y_train,
+            y_val,
+            y_test,
+            config,
+            global_X_test=None,
+            global_y_test=None
+    ):
         self.client_id = client_id
         self.log = logging.getLogger(f'Client {client_id}')
         self.model = model
@@ -59,6 +73,15 @@ class ADClient(fl.client.NumPyClient):
         self.config = config
         self.threshold = 1000
 
+        self.best_val_loss = np.inf
+        self.best_val_params = model.get_weights()
+        self.last_val_loss = np.nan
+        self.val_losses = []
+        self.val_acc = []
+
+        self.global_X_test = global_X_test
+        self.global_y_test = global_y_test
+
     def get_properties(self, config):
         """Get properties of client."""
         raise Exception("Not implemented")
@@ -70,7 +93,7 @@ class ADClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         """Train parameters on the locally held training set."""
         if not self.config.fit_if_no_malware and not self.has_own_malware:
-            return
+            return [], 0, {}
 
         mal_dataset = deserialize(config['mal_dataset'])
 
@@ -81,7 +104,7 @@ class ADClient(fl.client.NumPyClient):
         num_examples_train = len(X_train_l)
         num_examples_mal = y_train.sum()
 
-        if not self.config.setting == Setting.FEDERATED:
+        if self.config.setting == Setting.FEDERATED:
             logger.info("Setting weights")
             self.model.set_weights(parameters)
             proxy_spheres = deserialize(config['proxy_spheres'])
@@ -124,6 +147,13 @@ class ADClient(fl.client.NumPyClient):
         val_negative_loss = history.history['val_+loss'][0]
         val_prox_loss = history.history['val_prox_loss'][0]
 
+        self.last_val_loss = val_loss
+
+        if self.config.setting == Setting.LOCAL and val_loss <= self.best_val_loss:
+            print(f"[*] Round {start_epoch} best val loss so far: {val_loss}, saving model")
+            self.best_val_params = self.model.get_weights()
+            self.best_val_loss = val_loss
+            self.best_round = start_epoch
 
         # Calculate the threshold based on the local validation data
         ben_val = X_val[(y_val == 0)[:, 0]]
@@ -132,10 +162,12 @@ class ADClient(fl.client.NumPyClient):
         self.threshold = get_threshold(ben_val, mse)
 
         cls_pred = self.model.predict(X_val)[:, -1]
-        val_acc = ((cls_pred > 0.5) == y_val).mean()
+        val_acc = float(((cls_pred > 0.5) == y_val).mean())
 
         # Return updated model parameters and results
         parameters_prime = self.model.get_weights()
+        if self.config.setting == Setting.LOCAL:
+            parameters_prime = [np.zeros_like(layer) for layer in self.model.get_weights()]
         results = {
             "id": self.client_id,
             "loss": loss,
@@ -158,44 +190,56 @@ class ADClient(fl.client.NumPyClient):
     def evaluate(self, parameters, config):
         """Evaluate parameters on the locally held test set."""
 
-        num_malicious = (self.y_test == 1).sum()
-
-        # Update local model with global parameters
-        if not self.config.setting == Setting.LOCAL.value:
+        if self.config.setting == Setting.FEDERATED:
             self.model.set_weights(parameters)
             self.threshold = config['threshold']
             logger.info(f'Client {self.client_id} - threshold: {self.threshold}')
             if 'scaler' in config:
                 self.scaler = MinMaxScaler.load(config["scaler"])
-        #log(f'Client {self.client_id} - classifier disabled: {self.model.disable_classifier}')
 
-        # Get config values
-        steps: int = config["val_steps"]
+        loss, eval_results = self.eval_test(self.X_test, self.y_test)
+        eval_results['val_loss'] = self.last_val_loss
 
-        X_test = self.scaler.transform(self.X_test)
-        num_examples_test = len(X_test)
+        num_examples = len(self.y_test)
 
-        Xy = np.concatenate([X_test, self.y_test.reshape(-1, 1)], axis=1).astype('float32')
-        loss, _, _, _, _, _, _ = self.model.evaluate(Xy, Xy)
+        if self.config.setting == Setting.LOCAL:
+            _, global_results = self.eval_test(self.global_X_test, self.global_y_test, 'global_')
+            eval_results.update(global_results)
+            if not self.config.fit_if_no_malware and not self.has_own_malware:
+                # The training is done locally only and the client does not train on its own data
+                # because it does not have any malware. Returning 0 as number of examples, so that
+                # the results aggregation discards it
+                num_examples = 0
+            else:
+                num_examples = len(self.global_y_test)
+
+        return loss, num_examples, eval_results
+
+    def eval_test(self, X_test, y_test, res_prefix=''):
+        num_malicious = (y_test == 1).sum()
+
+        X_test = self.scaler.transform(X_test)
+
+        loss = 0.1
 
         y_pred_raw = self.model.predict(X_test)
         y_pred = (y_pred_raw[:, -1] > 0.5).astype(float).T
 
-        conf_matrix = confusion_matrix(self.y_test, y_pred)
+        conf_matrix = confusion_matrix(y_test, y_pred)
         if conf_matrix.size == 1:
             conf_matrix = np.pad(conf_matrix, ((0, 1), (0, 1)), constant_values=0)
-        cls_acc = (y_pred == self.y_test).mean()
+        cls_acc = float((y_pred == y_test).mean())
 
-        num_malware = (self.y_test == 1).sum()
-        num_benign = (self.y_test == 0).sum()
+        num_malware = (y_test == 1).sum()
+        num_benign = (y_test == 0).sum()
 
         cls_mal_mask = y_pred == 1
-        cls_mal_true = self.y_test[cls_mal_mask]
+        cls_mal_true = y_test[cls_mal_mask]
 
         cls_fp = int((cls_mal_true == 0).sum())
         cls_tp = int((cls_mal_true == 1).sum())
 
-        cls_ben_true = self.y_test[y_pred == 0]
+        cls_ben_true = y_test[y_pred == 0]
         cls_tn = int((cls_ben_true == 0).sum())
         cls_fn = int((cls_ben_true == 1).sum())
 
@@ -207,7 +251,7 @@ class ADClient(fl.client.NumPyClient):
         y_anomaly_pred = (mse > self.threshold).astype('float32')
 
         anomalies_mask = y_anomaly_pred == 1
-        anomalies_true = self.y_test[anomalies_mask]
+        anomalies_true = y_test[anomalies_mask]
 
         ad_fp = int((anomalies_true == 0).sum())
         ad_tp = int((anomalies_true == 1).sum())
@@ -217,7 +261,8 @@ class ADClient(fl.client.NumPyClient):
         ad_tpr = (ad_tp / num_malware) if num_malicious else np.nan
         ad_fpr = ad_fp / num_benign
 
-        ad_accuracy = (y_anomaly_pred == self.y_test).mean()
+        ad_accuracy = (y_anomaly_pred == y_test).mean()
+
         eval_results = {
             "id": self.client_id,
             "cls_fp": cls_fp,
@@ -234,18 +279,19 @@ class ADClient(fl.client.NumPyClient):
             'ad_fn': ad_fn,
             'ad_tpr': ad_tpr,
             'ad_fpr': ad_fpr,
-            'ad_acc': ad_accuracy,
+            'ad_acc': ad_accuracy
         }
 
-        return loss, int(num_examples_test), eval_results
+        return loss, {f'{res_prefix}{key}': value for key, value in eval_results.items()}
+
 
     def prepare_local_dataset(self, vaccine: np.array):
         X_train = self.scaler.transform(self.X_train)
         X_val = self.scaler.transform(self.X_val)
-        vaccine = self.scaler.transform(vaccine)
-        if self.y_train.sum() > 0 and not self.config.client.use_vaccine_if_own:
+        if (self.y_train.sum() > 0 and not self.config.client.use_vaccine_if_own) or vaccine.size == 0:
             return X_train, X_val, self.y_train.reshape((-1, 1)), self.y_val.reshape((-1, 1))
 
+        vaccine = self.scaler.transform(vaccine)
         mal_train, mal_val = train_test_split(
             vaccine,
             test_size=self.config.client.val_ratio,
@@ -313,13 +359,14 @@ def load_partition(day: int, client_id: int, config: Config):
 def main(client_id: int, day: int, config_path: str = None, **overrides) -> None:
 
     config = Config.load(config_path, **overrides)
-    # TODO load local
-    # Parse command line arguments
     data_dir = Path(config.data_dir)
 
     tf.keras.utils.set_random_seed(config.seed)
 
-    # X_train, X_val, X_test, y_train, y_val, y_test = load_partition(day, client_id, config.data_dir, config.seed)
+    if config.setting == Setting.LOCAL:
+        _, _, global_X_test, _, _, global_y_test = load_centralized_data(day, config)
+    else:
+        global_X_test = global_y_test = None
     X_train, X_val, X_test, y_train, y_val, y_test = load_partition(day, client_id, config)
 
 
@@ -330,11 +377,25 @@ def main(client_id: int, day: int, config_path: str = None, **overrides) -> None
     model.set_local_spheres({0.0: (np.zeros(10), 1.0), 1.0: (np.ones(10), 1.0)})
     model.compile()
 
+    if config.setting == Setting.LOCAL and day > 1 and config.load_model:
+        model.load_weights(config.model_file(day - 1, client_id))
+
     if day > 1 and config.load and config.setting == Setting.LOCAL.value:
         logger.info("Loading local model from previous day")
         model.load_weights(config.local_model_file(day-1, client_id))
     # Start Flower client
-    client = ADClient(client_id, model, X_train, X_val, X_test, y_train, y_val, y_test, config)
+    client = ADClient(
+        client_id,
+        model,
+        X_train,
+        X_val,
+        X_test,
+        y_train,
+        y_val, y_test,
+        config,
+        global_X_test,
+        global_y_test
+    )
 
     with open(f'scaler_client_{client_id}.pckl', 'wb') as f:
         pickle.dump(client.scaler, f)
@@ -348,6 +409,10 @@ def main(client_id: int, day: int, config_path: str = None, **overrides) -> None
 
     if config.setting == Setting.LOCAL.value:
         model.save_weights(config.local_model_file(day, client_id))
+
+    if config.setting == Setting.LOCAL:
+        model.set_weights(client.best_val_params)
+        model.save_weights(config.model_file(day, client_id))
 
 
 if __name__ == "__main__":

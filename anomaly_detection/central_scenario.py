@@ -1,3 +1,4 @@
+import pickle
 from copy import deepcopy
 from pydoc import cli
 import numpy as np
@@ -14,6 +15,9 @@ from common.config import Config
 from common.utils import get_threshold
 from common.models import get_ad_model, MultiHeadAutoEncoder
 from common.data_loading import load_mal_data, load_ben_data, load_centralized_data
+
+from tensorflow.python.ops.numpy_ops import np_config
+np_config.enable_numpy_behavior()
 
 data_dir = Path('../data')
 
@@ -44,12 +48,20 @@ def main(day: int, config=None, **overrides):
     model = MultiHeadAutoEncoder(config)
     model.compile()
 
-    X_train, X_val, X_test, y_train, y_val, y_test = create_dataset(day, num_clients)
-    
-    EPOCHS = config.server.num_rounds_first_day
+    X_train, X_val, X_test, y_train, y_val, y_test = create_dataset(day, config)
+
+    if config.load_model and day > 1 and config.model_file(day - 1).exists():
+        model.load_weights(config.model_file(day - 1))
+        EPOCHS = config.server.num_rounds_other_days
+    else:
+        EPOCHS = config.server.num_rounds_first_day
+
+    EPOCHS = sum(config.local_epochs(round) for round in range(1, EPOCHS+1))
+
     BATCH_SIZE = config.client.batch_size
 
     scaler = MinMaxScaler()
+    scaler.fit(X_train)
     X_train, X_val, X_test = scaler.transform(X_train), scaler.transform(X_val), scaler.transform(X_test)
 
     X_train_l = np.hstack([X_train, np.zeros((X_train.shape[0], 1))])
@@ -101,6 +113,11 @@ def main(day: int, config=None, **overrides):
     print(f"Centralized accuracy: {100*accuracy:.2f}%")
     print(f"Centralized tpr: {100*tpr:.2f}%")
     print(f"Centralized fpr: {100*fpr:.2f}%")
+    model.save_weights(config.model_file(day))
+    with config.results_file(day).open('wb') as f:
+        pickle.dump(history.history, f)
+    with config.scaler_file(day).open('wb') as f:
+        pickle.dump(scaler, f)
 
 
 class EvaluateCallback(tf.keras.callbacks.Callback):
@@ -140,16 +157,22 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
         ad_fp = int((anomalies_true == 0).sum())
         ad_tp = int((anomalies_true == 1).sum())
 
+        anomalies_false = self.y_test[y_anomaly_pred == 0]
+        ad_tn = int((anomalies_false == 0).sum())
+        ad_fn = int((anomalies_false == 1).sum())
+
         ad_tpr = (ad_tp / num_malware) if num_malicious else np.nan
         ad_fpr = ad_fp / num_benign
 
         ad_accuracy = (y_anomaly_pred == self.y_test).mean()
         eval_results = {
-            'ad_fp': ad_fp,
-            'ad_tp': ad_tp,
-            'ad_tpr': ad_tpr,
-            'ad_fpr': ad_fpr,
-            'ad_acc': ad_accuracy,
+            'fp': ad_fp,
+            'tp': ad_tp,
+            'tn': ad_tn,
+            'fn': ad_fn,
+            'tpr': ad_tpr,
+            'fpr': ad_fpr,
+            'acc': ad_accuracy,
         }
         for key, value in eval_results.items():
             logs[key] = value

@@ -2,6 +2,7 @@ from enum import Enum
 from functools import reduce
 from typing import Optional
 
+import pandas as pd
 from pyhocon import ConfigFactory, ConfigTree, HOCONConverter
 from pathlib import Path
 
@@ -56,20 +57,26 @@ class Config(ConfigTree):
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
-    def results_file(self, day: int) -> Path:
-        return self.results_dir / f'day{day}_{self.seed}_{self.setting}_results.pckl'
+    @property
+    def setting(self) -> Setting:
+        return Setting(self['setting'])
 
-    def model_file(self, day: int) -> Path:
-        return self.model_dir / f'day{day}_{self.seed}_{self.setting}_model.h5'
+    def results_file(self, day: int) -> Path:
+        return self.results_dir / f'day{day}_{self.seed}_{self.setting.value}_results.pckl'
+
+    def model_file(self, day: int, client_id=None) -> Path:
+        if client_id is not None:
+            return self.model_dir / f'day{day}_{self.seed}_{self.setting.value}_{client_id}_model.h5'
+        return self.model_dir / f'day{day}_{self.seed}_{self.setting.value}_model.h5'
 
     def local_model_file(self, day: int, client_id: int) -> Path:
-        return self.model_dir / f'day{day}_{self.seed}_{self.setting}_{client_id}_model.h5'
+        return self.model_dir / f'day{day}_{self.seed}_{self.setting.value}_{client_id}_model.h5'
 
     def scaler_file(self, day: int) -> Path:
-        return self.model_dir / f'day{day}_{self.seed}_{self.setting}_scaler.pckl'
+        return self.model_dir / f'day{day}_{self.seed}_{self.setting.value}_scaler.pckl'
 
     def spheres_file(self, day: int) -> Path:
-        return self.model_dir / f'day{day}_{self.seed}_{self.setting}_spheres.pckl'
+        return self.model_dir / f'day{day}_{self.seed}_{self.setting.value}_spheres.pckl'
 
     def local_epochs(self, rnd: int) -> int:
         epoch_config = {int(key): value for key, value in dict(self.server.local_epochs).items()}
@@ -88,8 +95,12 @@ class Config(ConfigTree):
         return self.malware_dir / self.malware_dirs[malware_id] / f'Day{malware_day}'
 
     def vaccine(self, day: int) -> Path:
-        malware_id, malware_day = self.server.vaccine_malware[day-1].split('_')
-        # print(f"====\n\n\n Reading vaccine from {self.malware_dir / self.malware_dirs[malware_id] / f'Day{malware_day}'}\n\n\n")
+        if 'vaccine_malware' not in self.server:
+            return None
+        malware_name = self.server.vaccine_malware[day-1]
+        if malware_name == '_':
+            return None
+        malware_id, malware_day = malware_name.split('_')
         return self.malware_dir / self.malware_dirs[malware_id] / f'Day{malware_day}'
 
     @staticmethod

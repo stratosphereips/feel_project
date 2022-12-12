@@ -66,16 +66,26 @@ def load_centralized_data(day: int, config: Config, train_malicious=True):
     ben_train, mal_train = zip(
         *[load_client_dataset(day, client, config) for client in range(1, num_fit_clients+1)]
     )
-    X_ben_train = pd.concat(ben_train, axis=0)
-    X_mal_train = pd.concat(mal_train, axis=0) if train_malicious else pd.DataFrame()
-
-    X_train, X_val, y_train, y_val = create_supervised_dataset(X_ben_train, X_mal_train, config.client.val_ratio, config.seed)
 
     ben_test, mal_test = zip(
         *[load_client_dataset(day, client, config) for client in range(1, config.num_evaluate_clients+1)]
     )
+
+    if vaccine := config.vaccine(day):
+        train_vaccine = _load_data(vaccine, drop_labels=False, drop_four_tuple=True)
+        test_vaccine = _load_data(vaccine, drop_labels=False, drop_four_tuple=True)
+
+        mal_train += train_vaccine,
+        mal_test += test_vaccine,
+
+    X_ben_train = pd.concat(ben_train, axis=0)
+    X_mal_train = pd.concat(mal_train, axis=0) if train_malicious else pd.DataFrame()
+
     X_ben_test = pd.concat(ben_test, axis=0)
     X_mal_test = pd.concat(mal_test, axis=0)
+
+    X_train, X_val, y_train, y_val = create_supervised_dataset(X_ben_train, X_mal_train, config.client.val_ratio, config.seed)
+
     X_test, _, y_test, _ = create_supervised_dataset(X_ben_test, X_mal_test, 0.0, config.seed)
 
     return X_train, X_val, X_test, y_train, y_val, y_test
