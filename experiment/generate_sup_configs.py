@@ -19,7 +19,7 @@ class Variable:
 var1 = Variable(
     'model.disable_reconstruction', False, True)
 var2 = Variable(
-    'load',
+    'load_model',
     True, False)
 var3 = Variable(
     'fit_if_no_malware', True, False)

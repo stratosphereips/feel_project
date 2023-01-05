@@ -22,7 +22,7 @@ CNAMES = ["num_flows", "avg_dur", "std_dev_dur", "percent_stdev_dur", "total_siz
             "ratio_of_differ_issuer_in_ssl_log", "ratio_of_differ_subject_in_cert", "ratio_of_differ_issuer_in_cert",
             "ratio_of_differ_sandns_in_cert", "ratio_of_same_subjects", "ratio_of_same_issuer", "ratio_is_same_CN_and_SNI",
             "avg_certificate_exponent", "is_SNI_in_top_level_domain", "ratio_certificate_path_error", "ratio_missing_cert_in_cert_path",
-            "label", "detailedlabel", "id.orig_h", "id.resp_h", "id.orig_p", "proto"]
+            "label", "detailedlabel"] #"id.orig_h", "id.resp_h", "id.orig_p", "proto"]
 
 def read_one_capture(path_to_bro_folder, verbosity):
     t0 = time()
