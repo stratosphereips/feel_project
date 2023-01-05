@@ -1,5 +1,13 @@
 pandas~=1.4.3
 numpy~=1.23.1
-tensorflow~=2.9.1
+tensorflow~=2.10.0
+tensorflow-addons~=0.18.0
 scikit-learn~=1.1.2
 flwr==1.0.0
+matplotlib~=3.6.0
+fire~=0.4.0
+zat~=0.4.4
+tqdm~=4.64.1
+pyhocon~=0.3.59
+umap-learn~=0.5.3
+tensorflow-addons~=0.18.0
