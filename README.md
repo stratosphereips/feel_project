@@ -1,5 +1,6 @@
 # FEEL project
-Code repository for the FEEL project
+Code repository for the FEEL project and Pavel Janata's thesis on Decentralized Federated Learning for
+Network Security
 
 # Goal
 Detect malicious SSL/TLS traffic using federated learning.

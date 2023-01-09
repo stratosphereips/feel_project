@@ -1,4 +1,7 @@
+from collections import defaultdict
 from pathlib import Path
+
+import pandas as pd
 from fire import Fire
 from tempfile import TemporaryDirectory
 from create_windows import _split_file
@@ -27,6 +30,13 @@ class FeaturesGenerator:
         self._script_dir = Path(__file__).parent
         self._extractor_path = self._script_dir / '..' / 'feature_extractor' / 'feature_extractor.py'
 
+        self.ip_map = keydefaultdict(IpObfuscationDefaultFactory.new)
+
+    def generate_features(self):
+        self.generate_client_features()
+        self.generate_malware_features()
+        self._save_ip_map(Path('ip_obfuscation_mapping.csv'))
+
     def generate_client_features(self):
         client_pbar = tqdm(list(enumerate(sorted(self._normal_dir.iterdir()), start=1)))
         for i, client_dir in client_pbar:
@@ -40,6 +50,7 @@ class FeaturesGenerator:
                 target_dir = self._processed_dir / f'Client{i}' / day_dir.name
                 target_dir.mkdir(exist_ok=True, parents=True)
                 self._generate_features(day_dir, target_dir)
+
 
     def generate_malware_features(self):
         mal_pbar = tqdm(list(sorted(self._malware_dir.iterdir())))
@@ -76,12 +87,32 @@ class FeaturesGenerator:
                 copy(logs_dir / 'x509.log', directory)
                 subprocess.call(['python', str(self._extractor_path), '-v', '0', '-z', str(directory)])
 
-            combine_features.main(temp_dir_path, output_dir)
+            combine_features.main(temp_dir_path, output_dir, self.ip_map)
+
+    def _save_ip_map(self, file):
+        df = pd.DataFrame(self.ip_map.items(), columns=['orig_ip', 'obfuscated_ip'])
+        df.to_csv(file, index=False)
+
+
+class keydefaultdict(defaultdict):
+    def __missing__(self, key):
+        if self.default_factory is None:
+            raise KeyError(key)
+        else:
+            ret = self[key] = self.default_factory(key)
+            return ret
+
+
+class IpObfuscationDefaultFactory:
+    count = 0
+
+    @staticmethod
+    def new(ip: str):
+        *prefix, last_oct = ip.split('.')
+        obfuscated_ip = '.'.join(prefix + [f'x{IpObfuscationDefaultFactory.count}'])
+        IpObfuscationDefaultFactory.count += 1
+        return obfuscated_ip
 
 
 if __name__ == '__main__':
     Fire(FeaturesGenerator)
-
-
-
-
