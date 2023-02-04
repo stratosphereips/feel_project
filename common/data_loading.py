@@ -8,7 +8,7 @@ import numpy as np
 from common.config import Config
 
 _label_cols = ['label', 'detailedlabel']
-_id_cols = ['id.orig_h', 'id.resp_h', 'id.orig_p', 'proto', 'day', 'hour']
+_id_cols = ['id.orig_h', 'id.resp_h', 'id.resp_p', 'proto', 'day', 'hour']
 
 
 def load_ben_data(day: int, client_id: int, data_dir: Path, drop_labels=True, drop_four_tuple=True):

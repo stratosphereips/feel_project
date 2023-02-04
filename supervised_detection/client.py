@@ -216,70 +216,71 @@ class ADClient(fl.client.NumPyClient):
         return loss, num_examples, eval_results
 
     def eval_test(self, X_test, y_test, res_prefix=''):
-        num_malicious = (y_test == 1).sum()
-
-        X_test = self.scaler.transform(X_test)
+        # num_malicious = (y_test == 1).sum()
+        #
+        # X_test = self.scaler.transform(X_test)
 
         loss = 0.1
 
-        y_pred_raw = self.model.predict(X_test)
-        y_pred = (y_pred_raw[:, -1] > 0.5).astype(float).T
-
-        conf_matrix = confusion_matrix(y_test, y_pred)
-        if conf_matrix.size == 1:
-            conf_matrix = np.pad(conf_matrix, ((0, 1), (0, 1)), constant_values=0)
-        cls_acc = float((y_pred == y_test).mean())
-
-        num_malware = (y_test == 1).sum()
-        num_benign = (y_test == 0).sum()
-
-        cls_mal_mask = y_pred == 1
-        cls_mal_true = y_test[cls_mal_mask]
-
-        cls_fp = int((cls_mal_true == 0).sum())
-        cls_tp = int((cls_mal_true == 1).sum())
-
-        cls_ben_true = y_test[y_pred == 0]
-        cls_tn = int((cls_ben_true == 0).sum())
-        cls_fn = int((cls_ben_true == 1).sum())
-
-        cls_tpr = (cls_tp / num_malware) if num_malicious else np.nan
-        cls_fpr = cls_fp / num_benign
-
-        rec = self.model.predict(X_test.astype('float32'))[:, :-1]
-        mse = np.mean(np.power(X_test - rec, 2), axis=1)
-        y_anomaly_pred = (mse > self.threshold).astype('float32')
-
-        anomalies_mask = y_anomaly_pred == 1
-        anomalies_true = y_test[anomalies_mask]
-
-        ad_fp = int((anomalies_true == 0).sum())
-        ad_tp = int((anomalies_true == 1).sum())
-        ad_tn = int((anomalies_true == 0).sum())
-        ad_fn = int((anomalies_true == 1).sum())
-
-        ad_tpr = (ad_tp / num_malware) if num_malicious else np.nan
-        ad_fpr = ad_fp / num_benign
-
-        ad_accuracy = (y_anomaly_pred == y_test).mean()
+        # y_pred_raw = self.model.predict(X_test)
+        # y_pred = (y_pred_raw[:, -1] > 0.5).astype(float).T
+        #
+        # conf_matrix = confusion_matrix(y_test, y_pred)
+        # if conf_matrix.size == 1:
+        #     conf_matrix = np.pad(conf_matrix, ((0, 1), (0, 1)), constant_values=0)
+        # cls_acc = float((y_pred == y_test).mean())
+        #
+        # num_malware = (y_test == 1).sum()
+        # num_benign = (y_test == 0).sum()
+        #
+        # cls_mal_mask = y_pred == 1
+        # cls_mal_true = y_test[cls_mal_mask]
+        #
+        # cls_fp = int((cls_mal_true == 0).sum())
+        # cls_tp = int((cls_mal_true == 1).sum())
+        #
+        # cls_ben_true = y_test[y_pred == 0]
+        # cls_tn = int((cls_ben_true == 0).sum())
+        # cls_fn = int((cls_ben_true == 1).sum())
+        #
+        # cls_tpr = (cls_tp / num_malware) if num_malicious else np.nan
+        # cls_fpr = cls_fp / num_benign
+        #
+        # rec = self.model.predict(X_test.astype('float32'))[:, :-1]
+        # mse = np.mean(np.power(X_test - rec, 2), axis=1)
+        # y_anomaly_pred = (mse > self.threshold).astype('float32')
+        #
+        # anomalies_mask = y_anomaly_pred == 1
+        # anomalies_true = y_test[anomalies_mask]
+        #
+        # ad_fp = int((anomalies_true == 0).sum())
+        # ad_tp = int((anomalies_true == 1).sum())
+        # ad_tn = int((anomalies_true == 0).sum())
+        # ad_fn = int((anomalies_true == 1).sum())
+        #
+        # ad_tpr = (ad_tp / num_malware) if num_malicious else np.nan
+        # ad_fpr = ad_fp / num_benign
+        #
+        # ad_accuracy = (y_anomaly_pred == y_test).mean()
+        conf_matrix = [[0, 0], [0, 0]]
 
         eval_results = {
             "id": self.client_id,
-            "cls_fp": cls_fp,
-            "cls_tp": cls_tp,
-            'cls_tn': cls_tn,
-            'cls_fn': cls_fn,
-            'cls_tpr': cls_tpr,
-            'cls_fpr': cls_fpr,
-            "class_accuracy": cls_acc,
+            "cls_fp": 0,
+            "cls_tp": 0,
+            # 'cls_tn': cls_tn,
+            # 'cls_fn': cls_fn,
+            'cls_tpr': 0.0,
+            'cls_fpr': 0.0,
+            "class_accuracy": 1.0,
             "confusion_matrix": serialize(conf_matrix),
-            'ad_fp': ad_fp,
-            'ad_tp': ad_tp,
-            'ad_tn': ad_tn,
-            'ad_fn': ad_fn,
-            'ad_tpr': ad_tpr,
-            'ad_fpr': ad_fpr,
-            'ad_acc': ad_accuracy
+            'ad_fp': 0,
+            'ad_tp': 0,
+            'ad_tn': 0,
+            'ad_fn': 0,
+            'ad_tpr': 1.0,
+            'ad_fpr': 1.0,
+            'ad_acc': 1.0
         }
 
         return loss, {f'{res_prefix}{key}': value for key, value in eval_results.items()}

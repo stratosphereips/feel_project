@@ -22,12 +22,12 @@ class BaseExperiment:
                 for day in range(1, self.config.days + 1):
                     self.run_day(day, config_path)
 
-                for day in range(1, self.config.days + 1):
-                    self.run_centralized(day, config_path)
+                # for day in range(1, self.config.days + 1):
+                #     self.run_centralized(day, config_path)
 
-                if self.config.evaluate_local_setting:
-                    for day in range(1, self.config.days + 1):
-                        self.run_day(day, config_path, local=True)
+                # if self.config.evaluate_local_setting:
+                #     for day in range(1, self.config.days + 1):
+                #         self.run_day(day, config_path, local=True)
 
         done_file: Path = self.config.experiment_dir / 'done'
         done_file.write_text('DONE')
