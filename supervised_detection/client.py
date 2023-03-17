@@ -107,9 +107,6 @@ class ADClient(fl.client.NumPyClient):
         if self.config.setting == Setting.FEDERATED:
             logger.info("Setting weights")
             self.model.set_weights(parameters)
-            proxy_spheres = deserialize(config['proxy_spheres'])
-            if proxy_spheres:
-                self.model.set_spheres(proxy_spheres)
         else:
             logger.info("Training locally only, ignoring new weights")
 
@@ -117,8 +114,6 @@ class ADClient(fl.client.NumPyClient):
         start_epoch: int = config['start_epoch']
         batch_size: int = self.config.client.batch_size
         epochs: int = config["local_epochs"]
-        # neg_data = deserialize(config['neg_dataset'])
-        # print(f"Got Neg data of size {neg_data.size}")
 
         tensorboard_callback = tf.keras.callbacks.TensorBoard(
             log_dir=self.log_dir, histogram_freq=1,
@@ -133,18 +128,10 @@ class ADClient(fl.client.NumPyClient):
             callbacks=[tensorboard_callback],
             initial_epoch=start_epoch
         )
-
-        embedded = self.model.embed(X_train_l[:, :-1]).numpy()
-        true_spheres, proxy_spheres = self.get_class_spheres(embedded, y_train[:, 0])
-        self.model.set_local_spheres(true_spheres)
-        #print(f"New spheres: {proxy_spheres}")
-
         loss = history.history["total_loss"][0]
         val_loss = history.history["val_total_loss"][0]
         val_reconstruction_loss = history.history['val_rec_loss'][0]
         val_classification_loss = history.history['val_class_loss'][0]
-        val_positive_loss = history.history['val_+loss'][0]
-        val_negative_loss = history.history['val_+loss'][0]
         val_prox_loss = history.history['val_prox_loss'][0]
 
         self.last_val_loss = val_loss
@@ -162,7 +149,7 @@ class ADClient(fl.client.NumPyClient):
         self.threshold = get_threshold(ben_val, mse)
 
         cls_pred = self.model.predict(X_val)[:, -1]
-        val_acc = float(((cls_pred > 0.5) == y_val).mean())
+        val_acc = float(((cls_pred > 0.5) == y_val).numpy().mean())
 
         # Return updated model parameters and results
         parameters_prime = self.model.get_weights()
@@ -174,12 +161,9 @@ class ADClient(fl.client.NumPyClient):
             "val_loss": val_loss,
             'val_classification_loss': val_classification_loss,
             'val_reconstruction_loss': val_reconstruction_loss,
-            'val_positive_loss': val_positive_loss,
-            'val_negative_loss': val_negative_loss,
             'val_prox_loss': val_prox_loss,
             'val_acc': val_acc,
             "scaler": self.scaler.dump(),
-            "proxy_spheres": serialize(proxy_spheres),
             "tracker": self.model.tracker.serialize(),
             "threshold": float(self.threshold),
             "num_mal_examples_train": int(num_examples_mal)
@@ -223,7 +207,7 @@ class ADClient(fl.client.NumPyClient):
         loss = 0.1
 
         y_pred_raw = self.model.predict(X_test)
-        y_pred = (y_pred_raw[:, -1] > 0.5).astype(float).T
+        y_pred = (y_pred_raw[:, -1] > 0.5).numpy().T
 
         conf_matrix = confusion_matrix(y_test, y_pred)
         if conf_matrix.size == 1:
@@ -314,20 +298,6 @@ class ADClient(fl.client.NumPyClient):
         y = np.concatenate([y, np.ones(mal.shape[0])])[shuffle_train].reshape(-1, 1)
         return X, y
 
-    def get_class_spheres(self, embedded, y):
-        true_spheres = {}
-        proxy_spheres = {}
-        for cls in np.unique(y).tolist():
-            embedded_cls = embedded[y == cls]
-            centroid = embedded_cls.mean(axis=0)
-            radius = np.linalg.norm(embedded_cls - centroid, axis=1).max()
-            true_spheres[cls] = (centroid, radius)
-            #print(f"Client {self.client_id}, {cls=}, {radius=}")
-            proxy_radius = radius + max(radius * self.proxy_radius_mult, 0.1)
-            proxy_center = self.random_point_on_sphere(centroid, proxy_radius)
-            proxy_spheres[cls] = (proxy_center, proxy_radius)
-        return true_spheres, proxy_spheres
-
     @staticmethod
     def random_point_on_sphere(centroid, radius):
         rand = np.random.random(centroid.size) * 2 - 1
@@ -373,8 +343,6 @@ def main(client_id: int, day: int, config_path: str = None, **overrides) -> None
     disable_classifier = (y_train == 1).sum() < 1
     # Load and compile Keras model
     model = MultiHeadAutoEncoder(config)
-    model.set_spheres({-1: {0.0: (np.zeros(10), 1.0), 1.0: (np.ones(10), 1.0)}})
-    model.set_local_spheres({0.0: (np.zeros(10), 1.0), 1.0: (np.ones(10), 1.0)})
     model.compile()
 
     if config.setting == Setting.LOCAL and day > 1 and config.load_model:

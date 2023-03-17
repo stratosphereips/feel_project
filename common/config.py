@@ -75,9 +75,6 @@ class Config(ConfigTree):
     def scaler_file(self, day: int) -> Path:
         return self.model_dir / f'day{day}_{self.seed}_{self.setting.value}_scaler.pckl'
 
-    def spheres_file(self, day: int) -> Path:
-        return self.model_dir / f'day{day}_{self.seed}_{self.setting.value}_spheres.pckl'
-
     def local_epochs(self, rnd: int) -> int:
         epoch_config = {int(key): value for key, value in dict(self.server.local_epochs).items()}
         return epoch_config.get(rnd, epoch_config[-1])
@@ -94,7 +91,7 @@ class Config(ConfigTree):
             malware_id, malware_day = malware, day
         return self.malware_dir / self.malware_dirs[malware_id] / f'Day{malware_day}'
 
-    def vaccine(self, day: int) -> Path:
+    def vaccine(self, day: int) -> Optional[Path]:
         if 'vaccine_malware' not in self.server:
             return None
         malware_name = self.server.vaccine_malware[day-1]

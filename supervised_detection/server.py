@@ -1,40 +1,31 @@
-import inspect
 import os
-import types
-from collections import defaultdict
-from copy import deepcopy
-
-from common.CustomFedAdam import CustomFedAdam
-from common.config import Config, Setting
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
 import warnings
 
+from flwr.server import ClientManager
+
 warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-from functools import reduce
-
-from flwr.common import FitRes, Parameters, Scalar, NDArrays, parameters_to_ndarrays, ndarrays_to_parameters, Metrics
-from flwr.server.client_proxy import ClientProxy
-
-from typing import Dict, Optional, Tuple, List, Union
-
-import flwr as fl
+from collections import defaultdict
+from common.config import Config, Setting
+from typing import Dict, Optional, Tuple, List
 import numpy as np
-from pathlib import Path
 from fire import Fire
-
-from common.utils import serialize_array, deserialize_string, client_malware_map, scale_data, MinMaxScaler, serialize, \
-    deserialize, pprint_cm, plot_embedding
-from common.models import get_classification_model, MultiHeadAutoEncoder, MetricsTracker
-from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset, load_day_dataset
 import pickle
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
 from tensorflow.python.ops.numpy_ops import np_config
+
 np_config.enable_numpy_behavior()
+
+import flwr as fl
+from flwr.common import FitRes, Parameters, Scalar, parameters_to_ndarrays, Metrics
+from flwr.server.client_proxy import ClientProxy
+
+from common.utils import MinMaxScaler, serialize, deserialize, pprint_cm
+from common.models import MultiHeadAutoEncoder
+from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset, load_day_dataset
 
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
@@ -47,7 +38,6 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         self.day = day
         self.config = config
         self.prev_median_loss = np.inf
-        self.proxy_spheres = {}
         self.scaler = None
         self.epoch = 0
         self.threshold = 100
@@ -122,8 +112,6 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
 
         self.threshold = weighted_th
 
-        self.proxy_spheres = {r.metrics['id']: deserialize(r.metrics['proxy_spheres']) for _, r in results}
-
         print(f'Aggregating {len(results)} results')
         weights, metrics_aggregated = super().aggregate_fit(server_round, results, failures)
 
@@ -185,14 +173,14 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         print(f"[*] Round {server_round} FPR avg from client results: {100 * cls_fprs:.2f}%")
 
         if self.config.setting == Setting.LOCAL:
-            g_conf_matrices = np.array([deserialize(result.metrics['global_confusion_matrix']) for _, result in results])
+            g_conf_matrices = np.array(
+                [deserialize(result.metrics['global_confusion_matrix']) for _, result in results])
             g_conf_matrix = g_conf_matrices.mean(axis=0)
             pprint_cm(g_conf_matrix, ['Benign', 'Malicious'])
         else:
             conf_matrices = np.array([deserialize(result.metrics['confusion_matrix']) for _, result in results])
             conf_matrix = conf_matrices.sum(axis=0)
             pprint_cm(conf_matrix, ['Benign', 'Malicious'])
-
 
         print("===============================\n   Anomaly detection Results   \n===============================")
         ad_fp = np.sum([r.metrics["ad_fp"] for _, r in results if r != None])
@@ -241,7 +229,6 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             "start_epoch": self.epoch,
             "local_epochs": self.config.local_epochs(rnd),  # 1 if rnd < 2 else 2,
             "threshold": self.threshold,
-            "proxy_spheres": serialize(self.proxy_spheres),
             "mal_dataset": serialize(mal_data),
         }
 
@@ -255,8 +242,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         """
         config = {
             "val_steps": 64,
-            "threshold": self.threshold,
-            "proxy_spheres": serialize(self.proxy_spheres)
+            "threshold": self.threshold
         }
         if rnd > 1:
             config['scaler'] = serialize(self.scaler)
@@ -280,7 +266,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             for metric_name, metric_values
             in metrics_transpose.items()
         }
-        ignore_set = {'id', 'scaler', 'proxy_spheres', 'tracker', 'confusion_matrix'}
+        ignore_set = {'id', 'scaler', 'tracker', 'confusion_matrix'}
         ignore_set.update([f'global_{x}' for x in ignore_set])
 
         for metric_name, metric_values in metrics_transpose.items():
@@ -291,7 +277,8 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             else:
                 metrics[metric_name] = np.average(metric_values, weights=client_examples)
 
-        matrix_metrics = {'cls_tp', 'cls_tn', 'cls_fp', 'cls_fn', 'ad_tp', 'ad_tn', 'ad_fp', 'ad_fn', 'ad_tp', 'ad_tn', 'ad_fp', 'ad_fn', 'val_loss'}
+        matrix_metrics = {'cls_tp', 'cls_tn', 'cls_fp', 'cls_fn', 'ad_tp', 'ad_tn', 'ad_fp', 'ad_fn', 'ad_tp', 'ad_tn',
+                          'ad_fp', 'ad_fn', 'val_loss'}
         for matrix_el in matrix_metrics:
             for _, client_m in client_metrics:
                 if matrix_el not in client_m:
@@ -325,9 +312,9 @@ def main(day: int, config_path: str = None, **overrides) -> None:
         num_rounds = config.server.num_rounds_first_day
 
     if config.fit_if_no_malware:
-        num_fit_clients = 10
+        num_fit_clients = config.num_clients
     else:
-        num_fit_clients = 6 if day == 1 else 4
+        num_fit_clients = max(6, config.num_clients) if day == 1 else max(4, config.num_clients)
     print(f"{num_fit_clients=}")
 
     # Create custom strategy that aggregates client metrics
@@ -367,9 +354,6 @@ def main(day: int, config_path: str = None, **overrides) -> None:
     results.val_acc_distributed = strategy.val_acc
 
     model.save_weights(config.model_file(day))
-    spheres = model.loss.spheres
-    with config.spheres_file(day).open('wb') as f:
-        pickle.dump(spheres, f)
     with config.scaler_file(day).open('wb') as f:
         pickle.dump(strategy.scaler, f)
     with config.results_file(day).open('wb') as f:
@@ -430,18 +414,6 @@ def get_eval_fn(model, day: int, experiment_config: Config):
 
 
 def load_data(data_dir, day, seed):
-    # Load data and model here to avoid the overhead of doing it in `evaluate` itself
-    # X_train = pd.DataFrame()
-    # X_test_ben = pd.DataFrame()
-    # X_test_mal = pd.DataFrame()
-    # for client_id in range(1, 11):
-    #     _, test_temp = load_ben_data(day, client_id, data_dir, drop_labels=False)
-    #     mal_temp = load_mal_data(day + 1, data_dir, drop_labels=False)[client_malware_map[client_id]]
-    #     # X_train = pd.concat([X_train, train_temp], ignore_index=True)
-    #     X_test_ben = pd.concat([X_test_ben, test_temp], ignore_index=True)
-    #     X_test_mal = pd.concat([X_test_mal, mal_temp], ignore_index=True)
-    # X_test, _, y_test, _ = create_supervised_dataset(X_test_ben, X_test_mal, 0.0)
-
     ben_train, ben_test = zip(
         *[load_ben_data(day, client, data_dir, drop_labels=False, drop_four_tuple=True) for client in
           range(1, 11)])

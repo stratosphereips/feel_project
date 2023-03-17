@@ -17,9 +17,10 @@ from common.models import get_ad_model, MultiHeadAutoEncoder
 from common.data_loading import load_mal_data, load_ben_data, load_centralized_data
 
 from tensorflow.python.ops.numpy_ops import np_config
+
 np_config.enable_numpy_behavior()
 
-data_dir = Path('../data')
+data_dir = Path("../data")
 
 
 def create_dataset(day, config: Config):
@@ -56,13 +57,17 @@ def main(day: int, config=None, **overrides):
     else:
         EPOCHS = config.server.num_rounds_first_day
 
-    EPOCHS = sum(config.local_epochs(round) for round in range(1, EPOCHS+1))
+    EPOCHS = sum(config.local_epochs(round) for round in range(1, EPOCHS + 1))
 
     BATCH_SIZE = config.client.batch_size
 
     scaler = MinMaxScaler()
     scaler.fit(X_train)
-    X_train, X_val, X_test = scaler.transform(X_train), scaler.transform(X_val), scaler.transform(X_test)
+    X_train, X_val, X_test = (
+        scaler.transform(X_train),
+        scaler.transform(X_val),
+        scaler.transform(X_test),
+    )
 
     X_train_l = np.hstack([X_train, np.zeros((X_train.shape[0], 1))])
     X_val_l = np.hstack([X_train, np.zeros((X_train.shape[0], 1))])
@@ -70,14 +75,15 @@ def main(day: int, config=None, **overrides):
     eval_callback = EvaluateCallback(model, X_test, y_test, X_val, y_val)
 
     history = model.fit(
-        X_train_l, X_train_l,
+        X_train_l,
+        X_train_l,
         shuffle=True,
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
         validation_data=(X_val_l, X_val_l),
-        callbacks=[eval_callback]
+        callbacks=[eval_callback],
     )
-    
+
     model.set_weights(eval_callback.best_weights)
 
     # The number of faulty samples for a 2% FPR (on the training set)
@@ -92,7 +98,9 @@ def main(day: int, config=None, **overrides):
     mse_ben = np.mean(np.power(X_test - rec, 2), axis=1)
     y_pred = (rec[:, -1] > th).astype(float).T
 
-    report = classification_report(y_test, y_pred, target_names=['Benign', 'Malicious'], output_dict=True)
+    report = classification_report(
+        y_test, y_pred, target_names=["Benign", "Malicious"], output_dict=True
+    )
     conf_matrix = confusion_matrix(y_test, y_pred)
     accuracy = (y_pred == y_test).mean()
 
@@ -114,9 +122,9 @@ def main(day: int, config=None, **overrides):
     print(f"Centralized tpr: {100*tpr:.2f}%")
     print(f"Centralized fpr: {100*fpr:.2f}%")
     model.save_weights(config.model_file(day))
-    with config.results_file(day).open('wb') as f:
+    with config.results_file(day).open("wb") as f:
         pickle.dump(history.history, f)
-    with config.scaler_file(day).open('wb') as f:
+    with config.scaler_file(day).open("wb") as f:
         pickle.dump(scaler, f)
 
 
@@ -131,7 +139,7 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
         self.best_loss = np.inf
 
     def on_epoch_end(self, epoch, logs=None):
-        total_loss = logs['val_total_loss']
+        total_loss = logs["val_total_loss"]
         if total_loss <= self.best_loss:
             self.best_loss = total_loss
             self.best_weights = deepcopy(self.model.get_weights())
@@ -146,10 +154,9 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
         num_malware = (self.y_test == 1).sum()
         num_benign = (self.y_test == 0).sum()
 
-
-        rec = self.model.predict(self.X_test.astype('float32'))[:, :-1]
+        rec = self.model.predict(self.X_test.astype("float32"))[:, :-1]
         mse = np.mean(np.power(self.X_test - rec, 2), axis=1)
-        y_anomaly_pred = (mse > threshold).astype('float32')
+        y_anomaly_pred = (mse > threshold).astype("float32")
 
         anomalies_mask = y_anomaly_pred == 1
         anomalies_true = self.y_test[anomalies_mask]
@@ -166,17 +173,18 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
 
         ad_accuracy = (y_anomaly_pred == self.y_test).mean()
         eval_results = {
-            'fp': ad_fp,
-            'tp': ad_tp,
-            'tn': ad_tn,
-            'fn': ad_fn,
-            'tpr': ad_tpr,
-            'fpr': ad_fpr,
-            'acc': ad_accuracy,
+            "fp": ad_fp,
+            "tp": ad_tp,
+            "tn": ad_tn,
+            "fn": ad_fn,
+            "tpr": ad_tpr,
+            "fpr": ad_fpr,
+            "acc": ad_accuracy,
         }
         for key, value in eval_results.items():
             logs[key] = value
         return logs
+
 
 if __name__ == "__main__":
     Fire(main)

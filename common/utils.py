@@ -28,7 +28,7 @@ def serialize_array(arr):
     temp_str = ""
     for element in arr:
         temp_str += str(element)
-        temp_str += '|'
+        temp_str += "|"
 
     return base64.b64encode(bytes(temp_str, "utf-8"))
 
@@ -36,7 +36,7 @@ def serialize_array(arr):
 def deserialize_string(b64_str: str):
     arr = base64.b64decode(b64_str).decode("utf-8", "ignore")
 
-    return [float(element) for element in arr.split('|') if element != '']
+    return [float(element) for element in arr.split("|") if element != ""]
 
 
 class MinMaxScaler(TransformerMixin, BaseEstimator):
@@ -64,7 +64,7 @@ class MinMaxScaler(TransformerMixin, BaseEstimator):
     def load(pickle_str):
         return pickle.loads(pickle_str)
 
-    def __add__(self, other: 'MinMaxScaler'):
+    def __add__(self, other: "MinMaxScaler"):
         if not self._fitted:
             return other
         if not other._fitted:
@@ -98,12 +98,12 @@ client_malware_map.update(
     #     3: 'CTU-Malware-Capture-Botnet-327-2',
     #     4: 'CTU-Malware-Capture-Botnet-346-1'
     # }
-        {
-        1: 'CTU-Malware-Capture-Botnet-67-1',
-        2: 'CTU-Malware-Capture-Botnet-219-2',
-        3: 'CTU-Malware-Capture-Botnet-230-1',
-        4: 'CTU-Malware-Capture-Botnet-327-2',
-        5: 'CTU-Malware-Capture-Botnet-346-1'
+    {
+        1: "CTU-Malware-Capture-Botnet-67-1",
+        2: "CTU-Malware-Capture-Botnet-219-2",
+        3: "CTU-Malware-Capture-Botnet-230-1",
+        4: "CTU-Malware-Capture-Botnet-327-2",
+        5: "CTU-Malware-Capture-Botnet-346-1",
     }
 )
 
@@ -153,32 +153,39 @@ def pprint_cm(cm, labels, hide_zeroes=False, hide_diagonal=False, hide_threshold
 def plot_embedding(X, y, model):
     dim_red = umap.UMAP()
     encoded = model.embed(X)
-    X_ = np.concatenate([X, y.reshape(-1, 1)], axis=1).astype('float32')
+    X_ = np.concatenate([X, y.reshape(-1, 1)], axis=1).astype("float32")
     model.evaluate(X_, X_)
     print(encoded.shape)
     print(encoded)
 
-    labels = ['Benign', 'Malicious']
+    labels = ["Benign", "Malicious"]
     fig = plt.figure(figsize=(10, 7))
     ax = fig.add_subplot()  # (projection='3d')
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22',
-              '#17becf']
+    colors = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    ]
 
-    if encoded.shape[1] > 2:
-        embedded = dim_red.fit_transform(encoded)
-    else:
-        embedded = encoded.numpy()
-        spheres = model.loss.spheres
-        for client in spheres.values():
-            for cls, (center, radius) in client.items():
-                circle = plt.Circle(center, radius, color=colors[int(cls)], alpha=0.2)
-                ax.add_patch(circle)
+
+    embedded = dim_red.fit_transform(encoded)
 
 
-
-    for cls in sorted(set(y.astype('int'))):
-        ax.scatter(embedded[y == cls, 0], embedded[y == cls, 1], c=colors[cls], label=labels[cls],
-                   alpha=1 if cls == 0 else 1)
+    for cls in sorted(set(y.astype("int"))):
+        ax.scatter(
+            embedded[y == cls, 0],
+            embedded[y == cls, 1],
+            c=colors[cls],
+            label=labels[cls],
+            alpha=1 if cls == 0 else 1,
+        )
     ax.legend()
     plt.title("Embedding by the vanilla Auto Encoder mapped by UMAP")
     plt.savefig(f'embedding_{datetime.now().strftime("%Y-%m-%d:%H:%M:%S")}.png')

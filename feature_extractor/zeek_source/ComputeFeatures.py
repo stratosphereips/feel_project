@@ -3,8 +3,9 @@ import pytz
 from .ExtractFeatures import ExtractFeatures
 from .PrintingManager import PrintingManager
 import pickle
-#from xgboost.sklearn import XGBClassifier
-#from xgboost.sklearn import Booster
+
+# from xgboost.sklearn import XGBClassifier
+# from xgboost.sklearn import Booster
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 
@@ -12,13 +13,14 @@ from sklearn.preprocessing import LabelEncoder
 class ComputeFeatures(ExtractFeatures, PrintingManager):
     def __init__(self):
         super(ComputeFeatures, self).__init__()
-        self.file_time_name = str(datetime.strftime(datetime.now(pytz.utc), "%Y-%m-%d_%H-%M"))
+        self.file_time_name = str(
+            datetime.strftime(datetime.now(pytz.utc), "%Y-%m-%d_%H-%M")
+        )
         self.data_model = None
         self.tuples_keys = None
         self.result_dict = {}
         self.malware = 0
         self.normal = 0
-
 
     def add_cert_to_non_cert_conn(self):
         for key in self.connection_4_tuples.keys():
@@ -28,12 +30,13 @@ class ComputeFeatures(ExtractFeatures, PrintingManager):
             """
             break_v = 0
             if self.connection_4_tuples[key].get_amount_diff_certificates() == 0:
-
                 server_names = self.connection_4_tuples[key].get_SNI_list()
                 if len(server_names) != 0:
                     for cert_serial in self.certificate_dict.keys():
                         for server_name in server_names:
-                            x509_line = self.certificate_dict[cert_serial].contain_server_name(server_name)
+                            x509_line = self.certificate_dict[
+                                cert_serial
+                            ].contain_server_name(server_name)
                             if x509_line != 0:
                                 self.connection_4_tuples[key].add_ssl_log_2(x509_line)
                                 # print("This Certificate was added after process:", "cert_serial:", cert_serial, "server_name=",server_name, "4-tuple=", key, "label:", self.connection_4_tuples[key].get_label_of_connection())
@@ -58,10 +61,49 @@ class ComputeFeatures(ExtractFeatures, PrintingManager):
     def normalize_data(self, data):
         # These values are max values from learning data from normalization. We have to normalize these new data
         # by this values.
-        maxs = [221044.0, 2052217.81665, 2058176.55791, 1.0, 1.33529714507e+11, 1.44846580408e+11, 11668903.3436,
-                1.0, 32749474.0, 22193611.0, 36718818.0321, 18361450.8651, 5268.0, 180224.0, 1.0, 22000.0, 3492.5,
-                956.0, 176.0, 883.0, 22.8304763079, 12.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
-                1.0, 1.0, 1.0, 1.0, 1.0, 65537.0, 0.0, 0.0, 0.0]
+        maxs = [
+            221044.0,
+            2052217.81665,
+            2058176.55791,
+            1.0,
+            1.33529714507e11,
+            1.44846580408e11,
+            11668903.3436,
+            1.0,
+            32749474.0,
+            22193611.0,
+            36718818.0321,
+            18361450.8651,
+            5268.0,
+            180224.0,
+            1.0,
+            22000.0,
+            3492.5,
+            956.0,
+            176.0,
+            883.0,
+            22.8304763079,
+            12.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+            65537.0,
+            0.0,
+            0.0,
+            0.0,
+        ]
         for i in range(0, len(data[0])):
             # max = 0
             # for j in range(len(data)):
@@ -136,21 +178,20 @@ class ComputeFeatures(ExtractFeatures, PrintingManager):
         clf_xgboost = XGBClassifier()
         booster = Booster()
         try:
-            booster.load_model('./xgboost_2017_09_22.bin')
+            booster.load_model("./xgboost_2017_09_22.bin")
         except IOError:
-            print('Error: No ML module to read.')
+            print("Error: No ML module to read.")
         clf_xgboost._Booster = booster
         # clf_xgboost._le = LabelEncoder().fit(['Malware', 'Normal'])
         clf_xgboost._le = LabelEncoder().fit([1, 0])
         results = clf_xgboost.predict(np.array(self.data_model))
 
-
         for i in range(len(self.tuples_keys)):
-            label = ''
+            label = ""
             if results[i] == 0:
-                label = 'Normal'
+                label = "Normal"
                 self.normal += 1
             else:
-                label = 'Suspicious'
+                label = "Suspicious"
                 self.malware += 1
             self.result_dict[self.tuples_keys[i]] = label
