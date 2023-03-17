@@ -142,7 +142,9 @@ class ADClient(fl.client.NumPyClient):
         mse_mal = dict()
         for folder in list(self.X_test_mal.keys()):
             X_test_mal_ = scale_data(self.X_test_mal[folder], self.X_min, self.X_max)
-            rec_mal[folder] = self.model.predict((X_test_mal_, X_test_mal_, X_test_mal_))
+            rec_mal[folder] = self.model.predict(
+                (X_test_mal_, X_test_mal_, X_test_mal_)
+            )
             mse_mal[folder] = np.mean(
                 np.power(X_test_mal_ - rec_mal[folder], 2), axis=1
             )

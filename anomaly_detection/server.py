@@ -166,7 +166,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         config = {
             "start_epoch": self.epoch,
             "local_epochs": self.config.local_epochs(rnd),
-            "threshold": self.threshold
+            "threshold": self.threshold,
         }
         return config
 

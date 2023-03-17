@@ -174,9 +174,7 @@ def plot_embedding(X, y, model):
         "#17becf",
     ]
 
-
     embedded = dim_red.fit_transform(encoded)
-
 
     for cls in sorted(set(y.astype("int"))):
         ax.scatter(

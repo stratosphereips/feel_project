@@ -7,23 +7,38 @@ from sklearn.model_selection import train_test_split
 
 from common.config import Config, Setting
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 import os
-#os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import tensorflow as tf
-#tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+# tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 import numpy as np
 from pathlib import Path
 
 import flwr as fl
 from flwr.common.logger import logger
-from common.data_loading import load_mal_data, load_ben_data, create_supervised_dataset, load_day_dataset, load_centralized_data
+from common.data_loading import (
+    load_mal_data,
+    load_ben_data,
+    create_supervised_dataset,
+    load_day_dataset,
+    load_centralized_data,
+)
 from common.models import get_classification_model, MultiHeadAutoEncoder
-from common.utils import get_threshold, serialize_array, \
-    deserialize_string, client_malware_map, MinMaxScaler, serialize, deserialize
+from common.utils import (
+    get_threshold,
+    serialize_array,
+    deserialize_string,
+    client_malware_map,
+    MinMaxScaler,
+    serialize,
+    deserialize,
+)
 from fire import Fire
 from sklearn.metrics import classification_report, confusion_matrix
 import pickle
@@ -36,23 +51,25 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 # Define Flower client
 class ADClient(fl.client.NumPyClient):
     def __init__(
-            self,
-            client_id,
-            model,
-            X_train,
-            X_val,
-            X_test,
-            y_train,
-            y_val,
-            y_test,
-            config,
-            global_X_test=None,
-            global_y_test=None
+        self,
+        client_id,
+        model,
+        X_train,
+        X_val,
+        X_test,
+        y_train,
+        y_val,
+        y_test,
+        config,
+        global_X_test=None,
+        global_y_test=None,
     ):
         self.client_id = client_id
-        self.log = logging.getLogger(f'Client {client_id}')
+        self.log = logging.getLogger(f"Client {client_id}")
         self.model = model
-        self.log_dir = Path(f"../logs/fit/client{self.client_id:02}") / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.log_dir = Path(
+            f"../logs/fit/client{self.client_id:02}"
+        ) / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
         # Store the data unscaled
         self.X_train = X_train
@@ -95,11 +112,15 @@ class ADClient(fl.client.NumPyClient):
         if not self.config.fit_if_no_malware and not self.has_own_malware:
             return [], 0, {}
 
-        mal_dataset = deserialize(config['mal_dataset'])
+        mal_dataset = deserialize(config["mal_dataset"])
 
         X_train, X_val, y_train, y_val = self.prepare_local_dataset(mal_dataset)
-        X_train_l = np.concatenate([X_train, y_train.reshape((-1, 1))], axis=1).astype('float32')
-        X_val_l = np.concatenate([X_val, y_val.reshape((-1, 1))], axis=1).astype('float32')
+        X_train_l = np.concatenate([X_train, y_train.reshape((-1, 1))], axis=1).astype(
+            "float32"
+        )
+        X_val_l = np.concatenate([X_val, y_val.reshape((-1, 1))], axis=1).astype(
+            "float32"
+        )
 
         num_examples_train = len(X_train_l)
         num_examples_mal = y_train.sum()
@@ -111,12 +132,13 @@ class ADClient(fl.client.NumPyClient):
             logger.info("Training locally only, ignoring new weights")
 
         # Get hyperparameters for this round
-        start_epoch: int = config['start_epoch']
+        start_epoch: int = config["start_epoch"]
         batch_size: int = self.config.client.batch_size
         epochs: int = config["local_epochs"]
 
         tensorboard_callback = tf.keras.callbacks.TensorBoard(
-            log_dir=self.log_dir, histogram_freq=1,
+            log_dir=self.log_dir,
+            histogram_freq=1,
         )
         # Train the model using hyperparameters from config
         history = self.model.fit(
@@ -126,18 +148,20 @@ class ADClient(fl.client.NumPyClient):
             epochs=start_epoch + epochs,
             validation_data=(X_val_l, X_val_l),
             callbacks=[tensorboard_callback],
-            initial_epoch=start_epoch
+            initial_epoch=start_epoch,
         )
         loss = history.history["total_loss"][0]
         val_loss = history.history["val_total_loss"][0]
-        val_reconstruction_loss = history.history['val_rec_loss'][0]
-        val_classification_loss = history.history['val_class_loss'][0]
-        val_prox_loss = history.history['val_prox_loss'][0]
+        val_reconstruction_loss = history.history["val_rec_loss"][0]
+        val_classification_loss = history.history["val_class_loss"][0]
+        val_prox_loss = history.history["val_prox_loss"][0]
 
         self.last_val_loss = val_loss
 
         if self.config.setting == Setting.LOCAL and val_loss <= self.best_val_loss:
-            print(f"[*] Round {start_epoch} best val loss so far: {val_loss}, saving model")
+            print(
+                f"[*] Round {start_epoch} best val loss so far: {val_loss}, saving model"
+            )
             self.best_val_params = self.model.get_weights()
             self.best_val_loss = val_loss
             self.best_round = start_epoch
@@ -154,19 +178,21 @@ class ADClient(fl.client.NumPyClient):
         # Return updated model parameters and results
         parameters_prime = self.model.get_weights()
         if self.config.setting == Setting.LOCAL:
-            parameters_prime = [np.zeros_like(layer) for layer in self.model.get_weights()]
+            parameters_prime = [
+                np.zeros_like(layer) for layer in self.model.get_weights()
+            ]
         results = {
             "id": self.client_id,
             "loss": loss,
             "val_loss": val_loss,
-            'val_classification_loss': val_classification_loss,
-            'val_reconstruction_loss': val_reconstruction_loss,
-            'val_prox_loss': val_prox_loss,
-            'val_acc': val_acc,
+            "val_classification_loss": val_classification_loss,
+            "val_reconstruction_loss": val_reconstruction_loss,
+            "val_prox_loss": val_prox_loss,
+            "val_acc": val_acc,
             "scaler": self.scaler.dump(),
             "tracker": self.model.tracker.serialize(),
             "threshold": float(self.threshold),
-            "num_mal_examples_train": int(num_examples_mal)
+            "num_mal_examples_train": int(num_examples_mal),
         }
 
         return parameters_prime, num_examples_train, results
@@ -176,18 +202,20 @@ class ADClient(fl.client.NumPyClient):
 
         if self.config.setting == Setting.FEDERATED:
             self.model.set_weights(parameters)
-            self.threshold = config['threshold']
-            logger.info(f'Client {self.client_id} - threshold: {self.threshold}')
-            if 'scaler' in config:
+            self.threshold = config["threshold"]
+            logger.info(f"Client {self.client_id} - threshold: {self.threshold}")
+            if "scaler" in config:
                 self.scaler = MinMaxScaler.load(config["scaler"])
 
         loss, eval_results = self.eval_test(self.X_test, self.y_test)
-        eval_results['val_loss'] = self.last_val_loss
+        eval_results["val_loss"] = self.last_val_loss
 
         num_examples = len(self.y_test)
 
         if self.config.setting == Setting.LOCAL:
-            _, global_results = self.eval_test(self.global_X_test, self.global_y_test, 'global_')
+            _, global_results = self.eval_test(
+                self.global_X_test, self.global_y_test, "global_"
+            )
             eval_results.update(global_results)
             if not self.config.fit_if_no_malware and not self.has_own_malware:
                 # The training is done locally only and the client does not train on its own data
@@ -199,7 +227,7 @@ class ADClient(fl.client.NumPyClient):
 
         return loss, num_examples, eval_results
 
-    def eval_test(self, X_test, y_test, res_prefix=''):
+    def eval_test(self, X_test, y_test, res_prefix=""):
         num_malicious = (y_test == 1).sum()
 
         X_test = self.scaler.transform(X_test)
@@ -230,9 +258,9 @@ class ADClient(fl.client.NumPyClient):
         cls_tpr = (cls_tp / num_malware) if num_malicious else np.nan
         cls_fpr = cls_fp / num_benign
 
-        rec = self.model.predict(X_test.astype('float32'))[:, :-1]
+        rec = self.model.predict(X_test.astype("float32"))[:, :-1]
         mse = np.mean(np.power(X_test - rec, 2), axis=1)
-        y_anomaly_pred = (mse > self.threshold).astype('float32')
+        y_anomaly_pred = (mse > self.threshold).astype("float32")
 
         anomalies_mask = y_anomaly_pred == 1
         anomalies_true = y_test[anomalies_mask]
@@ -251,35 +279,43 @@ class ADClient(fl.client.NumPyClient):
             "id": self.client_id,
             "cls_fp": cls_fp,
             "cls_tp": cls_tp,
-            'cls_tn': cls_tn,
-            'cls_fn': cls_fn,
-            'cls_tpr': cls_tpr,
-            'cls_fpr': cls_fpr,
+            "cls_tn": cls_tn,
+            "cls_fn": cls_fn,
+            "cls_tpr": cls_tpr,
+            "cls_fpr": cls_fpr,
             "class_accuracy": cls_acc,
             "confusion_matrix": serialize(conf_matrix),
-            'ad_fp': ad_fp,
-            'ad_tp': ad_tp,
-            'ad_tn': ad_tn,
-            'ad_fn': ad_fn,
-            'ad_tpr': ad_tpr,
-            'ad_fpr': ad_fpr,
-            'ad_acc': ad_accuracy
+            "ad_fp": ad_fp,
+            "ad_tp": ad_tp,
+            "ad_tn": ad_tn,
+            "ad_fn": ad_fn,
+            "ad_tpr": ad_tpr,
+            "ad_fpr": ad_fpr,
+            "ad_acc": ad_accuracy,
         }
 
-        return loss, {f'{res_prefix}{key}': value for key, value in eval_results.items()}
-
+        return loss, {
+            f"{res_prefix}{key}": value for key, value in eval_results.items()
+        }
 
     def prepare_local_dataset(self, vaccine: np.array):
         X_train = self.scaler.transform(self.X_train)
         X_val = self.scaler.transform(self.X_val)
-        if (self.y_train.sum() > 0 and not self.config.client.use_vaccine_if_own) or vaccine.size == 0:
-            return X_train, X_val, self.y_train.reshape((-1, 1)), self.y_val.reshape((-1, 1))
+        if (
+            self.y_train.sum() > 0 and not self.config.client.use_vaccine_if_own
+        ) or vaccine.size == 0:
+            return (
+                X_train,
+                X_val,
+                self.y_train.reshape((-1, 1)),
+                self.y_val.reshape((-1, 1)),
+            )
 
         vaccine = self.scaler.transform(vaccine)
         mal_train, mal_val = train_test_split(
             vaccine,
             test_size=self.config.client.val_ratio,
-            random_state=self.config.seed
+            random_state=self.config.seed,
         )
         X_train, y_train = self._prepare_local_dataset(X_train, self.y_train, mal_train)
         X_val, y_val = self._prepare_local_dataset(X_val, self.y_val, mal_val)
@@ -310,24 +346,34 @@ def load_partition(day: int, client_id: int, config: Config):
     assert client_id in range(1, 11)
     assert day in range(1, 6)
 
-    X_ben_train, X_ben_test = load_ben_data(day, client_id, config.data_dir, drop_labels=False)
+    X_ben_train, X_ben_test = load_ben_data(
+        day, client_id, config.data_dir, drop_labels=False
+    )
 
-    X_mal_train = load_day_dataset(config.client_malware(client_id, day), drop_labels=False)
-    X_mal_test = load_day_dataset(config.client_malware(client_id, day+1), drop_labels=False)
+    X_mal_train = load_day_dataset(
+        config.client_malware(client_id, day), drop_labels=False
+    )
+    X_mal_test = load_day_dataset(
+        config.client_malware(client_id, day + 1), drop_labels=False
+    )
 
-    X_train, X_val, y_train, y_val = create_supervised_dataset(X_ben_train, X_mal_train, 0.2, config.seed)
-    X_test, _, y_test, _ = create_supervised_dataset(X_ben_test, X_mal_test, 0.0, config.seed)
+    X_train, X_val, y_train, y_val = create_supervised_dataset(
+        X_ben_train, X_mal_train, 0.2, config.seed
+    )
+    X_test, _, y_test, _ = create_supervised_dataset(
+        X_ben_test, X_mal_test, 0.0, config.seed
+    )
 
     logger.info(f"[+] Num train samples for client {client_id}: {X_train.shape[0]}")
-    logger.info(f"[+] Num of train malicious samples for client {client_id}: {(y_train == 1.0).sum()}")
+    logger.info(
+        f"[+] Num of train malicious samples for client {client_id}: {(y_train == 1.0).sum()}"
+    )
     logger.info(f"[+] Num of features for client {client_id}: {X_train.shape[1]}")
 
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 
-
 def main(client_id: int, day: int, config_path: str = None, **overrides) -> None:
-
     config = Config.load(config_path, **overrides)
     data_dir = Path(config.data_dir)
 
@@ -337,8 +383,9 @@ def main(client_id: int, day: int, config_path: str = None, **overrides) -> None
         _, _, global_X_test, _, _, global_y_test = load_centralized_data(day, config)
     else:
         global_X_test = global_y_test = None
-    X_train, X_val, X_test, y_train, y_val, y_test = load_partition(day, client_id, config)
-
+    X_train, X_val, X_test, y_train, y_val, y_test = load_partition(
+        day, client_id, config
+    )
 
     disable_classifier = (y_train == 1).sum() < 1
     # Load and compile Keras model
@@ -350,7 +397,7 @@ def main(client_id: int, day: int, config_path: str = None, **overrides) -> None
 
     if day > 1 and config.load and config.setting == Setting.LOCAL.value:
         logger.info("Loading local model from previous day")
-        model.load_weights(config.local_model_file(day-1, client_id))
+        model.load_weights(config.local_model_file(day - 1, client_id))
     # Start Flower client
     client = ADClient(
         client_id,
@@ -359,13 +406,14 @@ def main(client_id: int, day: int, config_path: str = None, **overrides) -> None
         X_val,
         X_test,
         y_train,
-        y_val, y_test,
+        y_val,
+        y_test,
         config,
         global_X_test,
-        global_y_test
+        global_y_test,
     )
 
-    with open(f'scaler_client_{client_id}.pckl', 'wb') as f:
+    with open(f"scaler_client_{client_id}.pckl", "wb") as f:
         pickle.dump(client.scaler, f)
 
     address = f"{config.ip_address}:{config.port}"
