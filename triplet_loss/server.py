@@ -1,5 +1,6 @@
 import warnings
-warnings.filterwarnings('ignore')
+
+warnings.filterwarnings("ignore")
 
 from typing import Dict, Optional, Tuple, List
 
@@ -13,6 +14,7 @@ from common.data_loading import load_mal_data, load_ben_data
 import pandas as pd
 import argparse
 import os
+
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAvgM):
     def __init__(self, **kwds):
@@ -31,17 +33,21 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvgM):
             print(f"[*] Saving round {server_round} aggregated_weights...")
             np.savez(f"model-weights.npz", *aggregated_weights)
 
-        self.threshold = np.mean([r.metrics["threshold"]  for _, r in results])
-        print(f"[*] Round {server_round} threshold averaged from client results: {self.threshold:.5f}")
+        self.threshold = np.mean([r.metrics["threshold"] for _, r in results])
+        print(
+            f"[*] Round {server_round} threshold averaged from client results: {self.threshold:.5f}"
+        )
         # if server_round == 10:
-        
+
         # # Weigh threshold of each client by number of examples used
         ths = [r.metrics["threshold"] * r.num_examples for _, r in results if r != None]
         examples = [r.num_examples for _, r in results if r != None]
 
         # # Aggregate and print custom metric
         weighted_th = sum(ths) / sum(examples)
-        print(f"[*] Round {server_round} threshold weighted avg from client results: {weighted_th:.5f}")
+        print(
+            f"[*] Round {server_round} threshold weighted avg from client results: {weighted_th:.5f}"
+        )
 
         self.threshold = weighted_th
 
@@ -49,16 +55,20 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvgM):
         np.savez(f"round-{server_round}-threshold.npz", threshold=self.threshold)
 
         if server_round == 1:
-            X_min = np.min([deserialize_string(r.metrics["X_min"]) for _, r in results], axis=0)
+            X_min = np.min(
+                [deserialize_string(r.metrics["X_min"]) for _, r in results], axis=0
+            )
             print(f"[*] Saving round {server_round} minimums... {X_min}")
             np.savez(f"round-{server_round}-min.npz", X_min=np.array(X_min))
 
-            X_max = np.max([deserialize_string(r.metrics["X_max"]) for _, r in results], axis=0)
+            X_max = np.max(
+                [deserialize_string(r.metrics["X_max"]) for _, r in results], axis=0
+            )
             print(f"[*] Saving round {server_round} maximums... {X_max}")
             np.savez(f"round-{server_round}-max.npz", X_max=np.array(X_max))
 
         return aggregated_weights
-    
+
     def aggregate_evaluate(
         self,
         server_round: int,
@@ -69,42 +79,59 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAvgM):
         if not results:
             return None
 
-        anomalies_ben = np.sum([r.metrics["anomalies_ben"] for _, r in results if r != None])
-        print(f"[*] Round {server_round} total number of ben. anomalies from client results: {int(anomalies_ben)}")
+        anomalies_ben = np.sum(
+            [r.metrics["anomalies_ben"] for _, r in results if r != None]
+        )
+        print(
+            f"[*] Round {server_round} total number of ben. anomalies from client results: {int(anomalies_ben)}"
+        )
 
-        anomalies_mal = np.mean([np.sum(r.metrics["anomalies_mal"]) for _, r in results if r != None])
-        print(f"[*] Round {server_round} total number of mal. anomalies from client results: {int(anomalies_mal)}")
+        anomalies_mal = np.mean(
+            [np.sum(r.metrics["anomalies_mal"]) for _, r in results if r != None]
+        )
+        print(
+            f"[*] Round {server_round} total number of mal. anomalies from client results: {int(anomalies_mal)}"
+        )
 
         # Weigh accuracy of each client by number of examples used
-        accuracies = [r.metrics["accuracy"] * r.num_examples for _, r in results if r != None]
+        accuracies = [
+            r.metrics["accuracy"] * r.num_examples for _, r in results if r != None
+        ]
         examples = [r.num_examples for _, r in results if r != None]
 
         # Aggregate and print custom metric
-        accuracy_aggregated = 100*sum(accuracies) / sum(examples)
-        print(f"[*] Round {server_round} accuracy weighted avg from client results: {accuracy_aggregated:.2f}%")
+        accuracy_aggregated = 100 * sum(accuracies) / sum(examples)
+        print(
+            f"[*] Round {server_round} accuracy weighted avg from client results: {accuracy_aggregated:.2f}%"
+        )
 
         accuracies = np.mean([r.metrics["accuracy"] for _, r in results if r != None])
-        print(f"[*] Round {server_round} accuracy avg from client results: {100*accuracies:.2f}%")
+        print(
+            f"[*] Round {server_round} accuracy avg from client results: {100*accuracies:.2f}%"
+        )
 
         # Weigh TPR of each client by number of examples used
         tprs = [r.metrics["tpr"] * r.num_examples for _, r in results if r != None]
         # Aggregate and print custom metric
-        tpr_aggregated = 100*sum(tprs) / sum(examples)
-        print(f"[*] Round {server_round} TPR weighted avg from client results: {tpr_aggregated:.2f}%")
+        tpr_aggregated = 100 * sum(tprs) / sum(examples)
+        print(
+            f"[*] Round {server_round} TPR weighted avg from client results: {tpr_aggregated:.2f}%"
+        )
         tprs = np.mean([r.metrics["tpr"] for _, r in results if r != None])
         print(f"[*] Round {server_round} TPR avg from client results: {100*tprs:.2f}%")
 
         # Weigh FPR of each client by number of examples used
         fprs = [r.metrics["fpr"] * r.num_examples for _, r in results if r != None]
         # Aggregate and print custom metric
-        fpr_aggregated = 100*sum(fprs) / sum(examples)
-        print(f"[*] Round {server_round} FPR weighted avg from client results: {fpr_aggregated:.2f}%")
+        fpr_aggregated = 100 * sum(fprs) / sum(examples)
+        print(
+            f"[*] Round {server_round} FPR weighted avg from client results: {fpr_aggregated:.2f}%"
+        )
         fprs = np.mean([r.metrics["fpr"] for _, r in results if r != None])
         print(f"[*] Round {server_round} FPR avg from client results: {100*fprs:.2f}%")
 
         # Call aggregate_evaluate from base class (FedAvg)
         return super().aggregate_evaluate(server_round, results, failures)
-
 
 
 def main() -> None:
@@ -114,19 +141,38 @@ def main() -> None:
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Flower server")
-    parser.add_argument("--day", type=int, choices=(range(1,6)), required=True, help="Training day")
-    parser.add_argument("--seed", type=int, required=False, default=8181, help="Random seed")
-    parser.add_argument("--load", type=int, choices=(0,1), required=False, default=0, help="Load a model from disk or not")
-    parser.add_argument("--data_dir", type=str, required=False, default="/data", help="Path to the data direcotry")
-    parser.add_argument("--num_clients", type=int, choices=(range(1, 11)), required=False, default=10)
+    parser.add_argument(
+        "--day", type=int, choices=(range(1, 6)), required=True, help="Training day"
+    )
+    parser.add_argument(
+        "--seed", type=int, required=False, default=8181, help="Random seed"
+    )
+    parser.add_argument(
+        "--load",
+        type=int,
+        choices=(0, 1),
+        required=False,
+        default=0,
+        help="Load a model from disk or not",
+    )
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        required=False,
+        default="/data",
+        help="Path to the data direcotry",
+    )
+    parser.add_argument(
+        "--num_clients", type=int, choices=(range(1, 11)), required=False, default=10
+    )
 
     args = parser.parse_args()
-    
+
     day = args.day
     tf.keras.utils.set_random_seed(args.seed)
 
-    if args.load and day > 1 and os.path.exists(f'models/day{day-1}_{args.seed}_model'):
-        model = tf.keras.models.load_model(f'models/day{day-1}_{args.seed}_model')
+    if args.load and day > 1 and os.path.exists(f"models/day{day-1}_{args.seed}_model"):
+        model = tf.keras.models.load_model(f"models/day{day-1}_{args.seed}_model")
         num_rounds = 2
     else:
         model = get_triplet_loss_model()
@@ -145,7 +191,7 @@ def main() -> None:
         on_fit_config_fn=fit_config,
         on_evaluate_config_fn=evaluate_config,
         initial_parameters=fl.common.ndarrays_to_parameters(model.get_weights()),
-        server_momentum=0.2
+        server_momentum=0.2,
     )
 
     # Start Flower server (SSL-enabled) for n rounds of federated learning
@@ -153,15 +199,15 @@ def main() -> None:
         server_address="0.0.0.0:8000",
         config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
-        #certificates=(
+        # certificates=(
         #    Path(".cache/certificates/ca.crt").read_bytes(),
         #    Path(".cache/certificates/server.pem").read_bytes(),
         #    Path(".cache/certificates/server.key").read_bytes(),
-        #),
+        # ),
     )
 
     # model.save(f'day{day}_{args.seed}_model.h5')
-    tf.keras.models.save_model(model, f'models/day{day}_{args.seed}_model')
+    tf.keras.models.save_model(model, f"models/day{day}_{args.seed}_model")
 
 
 def get_eval_fn(model, day, data_dir):
@@ -179,31 +225,31 @@ def get_eval_fn(model, day, data_dir):
 
     # The `evaluate` function will be called after every round
     def evaluate(
-        server_round: int, 
-        parameters: fl.common.NDArrays, 
-        config: Dict[str, fl.common.Scalar]
+        server_round: int,
+        parameters: fl.common.NDArrays,
+        config: Dict[str, fl.common.Scalar],
     ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
         model.set_weights(parameters)  # Update model with the latest parameters
         loss = model.evaluate((X_test_ben, X_test_ben, X_test_ben), X_test_ben)
 
         # Read the stored aggregated threshold from the clients
         if server_round > 0:
-            with np.load(f'round-{server_round}-threshold.npz') as data:
-                threshold = float(data['threshold'])
+            with np.load(f"round-{server_round}-threshold.npz") as data:
+                threshold = float(data["threshold"])
         else:
-            threshold = 100 # dummy value
+            threshold = 100  # dummy value
 
         # Read the stored per-feature maximums and minimums
         if server_round > 0:
-            with np.load(f'round-1-max.npz') as data:
-                X_max = data['X_max']
+            with np.load(f"round-1-max.npz") as data:
+                X_max = data["X_max"]
 
-            with np.load(f'round-1-min.npz') as data:
-                X_min = data['X_min']
+            with np.load(f"round-1-min.npz") as data:
+                X_min = data["X_min"]
         else:
-            X_max = 10*np.ones(36)
-            X_min = -10*np.ones(36)
-        
+            X_max = 10 * np.ones(36)
+            X_min = -10 * np.ones(36)
+
         X_test_ben_ = scale_data(X_test_ben, X_min, X_max)
 
         # Detect all the samples which are anomalies.
@@ -215,7 +261,9 @@ def get_eval_fn(model, day, data_dir):
         for folder in list(X_test_mal.keys()):
             X_test_mal_ = scale_data(X_test_mal[folder], X_min, X_max)
             rec_mal[folder] = model.predict((X_test_mal_, X_test_mal_, X_test_mal_))
-            mse_mal[folder] = np.mean(np.power(X_test_mal_ - rec_mal[folder], 2), axis=1)
+            mse_mal[folder] = np.mean(
+                np.power(X_test_mal_ - rec_mal[folder], 2), axis=1
+            )
 
         # Detect all the samples which are anomalies.
         anomalies_ben = sum(mse_ben > threshold)
@@ -237,19 +285,19 @@ def get_eval_fn(model, day, data_dir):
         # fpr = fp / (fp + tn)
 
         tpr = tp / num_malware
-        fpr = fp / X_test_ben_ .shape[0]
-
+        fpr = fp / X_test_ben_.shape[0]
 
         return loss, {
-                "threshold": threshold, 
-                "anomalies_ben": anomalies_ben, 
-                "anomalies_mal": anomalies_mal, 
-                "accuracy": accuracy,
-                "tpr": tpr,
-                "fpr": fpr
-                }
+            "threshold": threshold,
+            "anomalies_ben": anomalies_ben,
+            "anomalies_mal": anomalies_mal,
+            "accuracy": accuracy,
+            "tpr": tpr,
+            "fpr": fpr,
+        }
 
     return evaluate
+
 
 def fit_config(rnd: int):
     """Return training configuration dict for each round.
@@ -269,28 +317,27 @@ def evaluate_config(rnd: int):
     batches) during rounds one to three, then increase to ten local
     evaluation steps.
     """
-    with np.load(f'round-{rnd}-threshold.npz') as data:
-        threshold = float(data['threshold'])
+    with np.load(f"round-{rnd}-threshold.npz") as data:
+        threshold = float(data["threshold"])
 
     print("[*] Evaluate config with threshold:", threshold)
 
     # if rnd == 1:
-    with np.load(f'round-1-max.npz') as data:
-        X_max = serialize_array(data['X_max'])
+    with np.load(f"round-1-max.npz") as data:
+        X_max = serialize_array(data["X_max"])
 
-    with np.load(f'round-1-min.npz') as data:
-        X_min = serialize_array(data['X_min'])
-    
+    with np.load(f"round-1-min.npz") as data:
+        X_min = serialize_array(data["X_min"])
 
     print("[*] Evaluate config with threshold:", threshold)
 
-    val_steps = 10 
+    val_steps = 10
     # if rnd < 4 else 10
     return {
         "val_steps": val_steps,
         "threshold": threshold,
         "X_min": X_min,
-        "X_max": X_max
+        "X_max": X_max,
     }
 
 

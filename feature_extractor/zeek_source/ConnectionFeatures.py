@@ -3,13 +3,13 @@ from .Connection4tuple import Connection4tuple
 
 
 class ConnectionFeatures(Connection4tuple):
-
     def __init__(self, tuple_index):
         super(ConnectionFeatures, self).__init__(tuple_index)
 
     """
     ---------- Get Feature -------------------
     """
+
     # ---------------------------------------------------
     # 01. ---------- Number of flows --------------------
     def get_number_of_flows(self):
@@ -40,8 +40,12 @@ class ConnectionFeatures(Connection4tuple):
         # self.check_zero_dividing(self.flow_which_has_duration_number, "flow_which_has_duration_number is 0 !!!")
         if len(self.duration_list) != 0:
             out_of_bounds = 0
-            lower_level = self.get_average_of_duration() - self.get_standard_deviation_duration()
-            upper_level = self.get_average_of_duration() + self.get_standard_deviation_duration()
+            lower_level = (
+                self.get_average_of_duration() - self.get_standard_deviation_duration()
+            )
+            upper_level = (
+                self.get_average_of_duration() + self.get_standard_deviation_duration()
+            )
             for i in range(len(self.duration_list)):
                 if self.duration_list[i] < lower_level:
                     out_of_bounds += 1
@@ -78,13 +82,17 @@ class ConnectionFeatures(Connection4tuple):
         for key in self.state_of_connection_dict.keys():
             total_value_states += self.state_of_connection_dict[key]
         if total_value_states != 0:
-            establihed_states += self.state_of_connection_dict.get('SF', 0)
-            establihed_states += self.state_of_connection_dict.get('S1', 0)
-            establihed_states += self.state_of_connection_dict.get('S2', 0)
-            establihed_states += self.state_of_connection_dict.get('S3', 0)
-            establihed_states += self.state_of_connection_dict.get('RSTO', 0)  # delete this
-            establihed_states += self.state_of_connection_dict.get('RSTR', 0)  # delete this
-            return (establihed_states / float(total_value_states))
+            establihed_states += self.state_of_connection_dict.get("SF", 0)
+            establihed_states += self.state_of_connection_dict.get("S1", 0)
+            establihed_states += self.state_of_connection_dict.get("S2", 0)
+            establihed_states += self.state_of_connection_dict.get("S3", 0)
+            establihed_states += self.state_of_connection_dict.get(
+                "RSTO", 0
+            )  # delete this
+            establihed_states += self.state_of_connection_dict.get(
+                "RSTR", 0
+            )  # delete this
+            return establihed_states / float(total_value_states)
         return -1
 
     """
@@ -169,9 +177,9 @@ class ConnectionFeatures(Connection4tuple):
         ssl = 0
         total = 0
         for key in self.version_of_ssl_dict.keys():
-            if 'tls' in key.lower():
+            if "tls" in key.lower():
                 tls += self.version_of_ssl_dict[key]
-            elif 'ssl' in key.lower():
+            elif "ssl" in key.lower():
                 ssl += self.version_of_ssl_dict[key]
             total += self.version_of_ssl_dict[key]
         if total != 0:
@@ -186,7 +194,7 @@ class ConnectionFeatures(Connection4tuple):
     def get_average_of_certificate_length(self):
         if self.certificate_valid_number != 0:
             # if numpy.mean(self.temp_list) != self.certificate_valid_length / float(self.certificate_valid_number):
-                # print("Error: numpy mean and mean by hand are not same.")
+            # print("Error: numpy mean and mean by hand are not same.")
             return self.certificate_valid_length / float(self.certificate_valid_number)
         return -1
 
@@ -251,7 +259,7 @@ class ConnectionFeatures(Connection4tuple):
             up += int(key) * self.certificate_path[key]
             down += self.certificate_path[key]
         if down != 0:
-            return up/float(down)
+            return up / float(down)
         return -1
 
     # 25 x509/ssl ratio
@@ -295,16 +303,16 @@ class ConnectionFeatures(Connection4tuple):
             return 1
         return -1
 
-
     """
     -----------------  New Features ------------------ 
     """
+
     # 31 How many ssl lines has different SNI ?
     def ratio_of_differ_SNI_in_ssl_log(self):
         # Delete stars.
         for i in range(0, len(self.SNI_list)):
-            if '*' in self.SNI_list[i]:
-                self.SNI_list[i] = self.SNI_list[i].replace('*', '')
+            if "*" in self.SNI_list[i]:
+                self.SNI_list[i] = self.SNI_list[i].replace("*", "")
 
         return compute_differents_in_lines(self.SNI_list)
 
@@ -350,7 +358,9 @@ class ConnectionFeatures(Connection4tuple):
     def average_certificate_exponent(self):
         if len(self.certificate_serial_dict.keys()) == 0:
             return -1
-        return self.certificate_exponent / float(len(self.certificate_serial_dict.keys()))
+        return self.certificate_exponent / float(
+            len(self.certificate_serial_dict.keys())
+        )
 
     # 41 Is server name in top-level-domain ?
     def is_SNI_in_top_level_domain(self):
@@ -376,6 +386,8 @@ class ConnectionFeatures(Connection4tuple):
         if down == 0:
             return -1
         return self.founded_root_certificate / float(down)
+
+
 """
 ------- Computation method ---------
 """

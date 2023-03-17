@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+
 # from tensorflow import keras
 # from tensorflow.keras import layers
 
@@ -29,6 +30,7 @@ df_training_value = (df_small_noise - training_mean) / training_std
 print("Number of training samples:", len(df_training_value))
 
 TIME_STEPS = 288
+
 
 # Generated training sequences for use in the model.
 def create_sequences(values, time_steps=TIME_STEPS):

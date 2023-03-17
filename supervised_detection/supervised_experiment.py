@@ -26,5 +26,5 @@ def main(config_path: str):
     exp.run()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     fire.Fire(main)

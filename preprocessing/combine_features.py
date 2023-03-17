@@ -22,13 +22,15 @@ def combine_files(folder_name: Path, ip_map, day):
     total_lines = 0
     for folder in sorted(folder_name.iterdir()):
         try:
-            if (folder / 'features.csv').exists():
-                df_temp = pd.read_csv(folder / 'features.csv')
+            if (folder / "features.csv").exists():
+                df_temp = pd.read_csv(folder / "features.csv")
                 hour = int(folder.name) % (24 * 3600) // 3600
 
-                df_temp['id.orig_h'] = df_temp['id.orig_h'].transform(ip_map.__getitem__)
-                df_temp['day'] = day
-                df_temp['hour'] = hour
+                df_temp["id.orig_h"] = df_temp["id.orig_h"].transform(
+                    ip_map.__getitem__
+                )
+                df_temp["day"] = day
+                df_temp["hour"] = hour
 
                 total_lines += len(df_temp)
                 df = pd.concat([df, df_temp], ignore_index=True)
@@ -39,5 +41,5 @@ def combine_files(folder_name: Path, ip_map, day):
     return df
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     Fire(main)

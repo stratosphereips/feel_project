@@ -1,5 +1,3 @@
-
-
 """
 This class stores all information for one "connection 4-tuple" object.
 Also it computes features.
@@ -9,7 +7,6 @@ import socket
 
 
 class Connection4tuple(object):
-
     def __init__(self, tuple_index):
         # basic 4-tuple
         self.tuple_index = tuple_index
@@ -87,14 +84,15 @@ class Connection4tuple(object):
         self.read_top_level_domain_file()
 
     def read_top_level_domain_file(self):
-        with open('./top_level_domain') as file:
+        with open("./top_level_domain") as file:
             for line in file:
-                if line[0] == '#':
+                if line[0] == "#":
                     continue
                 self.top_level_domain.append(line.rstrip())
         file.close()
 
         # ssl_flow = this flow has ssl log in ssl file
+
     def add_ssl_flow(self, flow, label):
         # if 'Botnet' in label:
         #     self.malware_label += 1
@@ -133,7 +131,7 @@ class Connection4tuple(object):
         self.compute_ssl_features(ssl_log)
 
         # add dasetname of this flow
-        if not(dataset_name in self.datsets_names_list):
+        if not (dataset_name in self.datsets_names_list):
             self.datsets_names_list.append(dataset_name)
 
     def add_ssl_log_2(self, valid_x509_line):
@@ -142,9 +140,10 @@ class Connection4tuple(object):
     """
     --------- computing methods ---------------
     """
+
     def compute_classic_features(self, flow):
         # Split the goodonesIPs on elements.
-        split = flow.split('	')
+        split = flow.split("	")
         try:
             self.uid_flow_dict[split[1]] += 1
             # print("Error: more same conn uids in compute_ssl_features function !!!!!")
@@ -183,7 +182,7 @@ class Connection4tuple(object):
 
     def compute_ssl_features(self, ssl_log):
         self.ssl_logs_list.append(ssl_log)
-        split = ssl_log.split('	')
+        split = ssl_log.split("	")
         self.ssl_uids_list.append(split[1])
         try:
             self.version_of_ssl_dict[split[6]] += 1
@@ -196,11 +195,11 @@ class Connection4tuple(object):
             self.version_of_ssl_cipher_dict[split[7]] = 1
 
         # Certificate path - number of signed certificate in first certificate
-        if split[14] != '-':
+        if split[14] != "-":
             # ssl aggregation has cert
             self.ssl_with_certificate += 1
 
-            list_of_x509_uids = split[14].split(',')
+            list_of_x509_uids = split[14].split(",")
             try:
                 self.certificate_path[len(list_of_x509_uids)] += 1
             except:
@@ -208,11 +207,10 @@ class Connection4tuple(object):
         else:
             self.ssl_without_certificate += 1
 
-
         # SNI is known
         # split[9] == server name (SNI)
         server_name = split[9]
-        if server_name != '-':
+        if server_name != "-":
             self.ssl_with_SNI += 1
 
             # self.is_SNI_in_san_dns.append(self.is_SNI_in_certificates(server_name))
@@ -242,32 +240,31 @@ class Connection4tuple(object):
                     # print("It is: ", server_name)
                     self.top_level_domain_error += 1
 
-
         # if 'signed certificate in certificate' in split[20]:
-        if 'signed certificate in certificate' in ssl_log:
+        if "signed certificate in certificate" in ssl_log:
             self.self_signed_cert += 1
             # if split[14] == '-':
             #     print "Self signed certificate without x509 uids !!!! Our feature architecture is bad !!!"
 
         # Find subject.
-        if split[16] != '-':
+        if split[16] != "-":
             self.subject_ssl_list.append(split[16])
         # Find issuer
-        if split[17] != '-':
+        if split[17] != "-":
             self.issuer_ssl_list.append(split[17])
-
 
     """
     Computing of certificates features
     """
+
     def compute_x509_features(self, valid_x509_line):
         self.x509_list.append(valid_x509_line)
         self.is_CN_in_SAN(valid_x509_line)
 
-        split = valid_x509_line.split('	')
+        split = valid_x509_line.split("	")
 
         # check if certificate was valid durig the capture
-        if split[7] != '-' and split[6] != '-':
+        if split[7] != "-" and split[6] != "-":
             try:
                 current_time = float(split[0])
                 before_date = float(split[6])
@@ -286,24 +283,26 @@ class Connection4tuple(object):
 
         # certificate info
         # if certifcate is not alredy here
-        if not(split[3] in self.certificate_serial_dict.keys()):
+        if not (split[3] in self.certificate_serial_dict.keys()):
             self.certificate_serial_dict[split[3]] = 1
 
             # self.add_cert_SAN_to_list(valid_x509_line)
 
             # certificate_key_length_dict
-            if split[11] != '-':
+            if split[11] != "-":
                 try:
                     self.certificate_key_length_dict[split[11]] += 1
                 except:
                     self.certificate_key_length_dict[split[11]] = 1
 
             # certificate valid length
-            if split[7] != '-' and split[6] != '-':
+            if split[7] != "-" and split[6] != "-":
                 try:
                     # certificate valid length
                     valid_length_sec = float(split[7]) - float(split[6])
-                    valid_length_days_not_round = int((valid_length_sec / (3600.0 * 24.0)))
+                    valid_length_days_not_round = int(
+                        (valid_length_sec / (3600.0 * 24.0))
+                    )
                     valid_length_days = round(valid_length_days_not_round, 2)
                     self.temp_list.append(valid_length_days)
 
@@ -314,22 +313,21 @@ class Connection4tuple(object):
                     pass
 
             # number of domain in san in x509
-            if split[14] != '-':
-                domains = len(split[14].split(','))
+            if split[14] != "-":
+                domains = len(split[14].split(","))
                 self.number_san_domains += domains
                 self.number_san_domains_index += 1
                 self.san_x509_list.append(split[14])
 
             # Certificate subject.
-            if split[4] != '-':
+            if split[4] != "-":
                 self.subject_x509_list.append(split[4])
             # Certificate issuer.
-            if split[5] != '-':
+            if split[5] != "-":
                 self.issuer_x509_list.append(split[5])
             # Certificate exponent.
-            if split[12] != '-':
+            if split[12] != "-":
                 self.certificate_exponent = int(split[12])
-
 
         # certificate is new, this connection does not contain this certificate
         else:
@@ -341,26 +339,24 @@ class Connection4tuple(object):
         # except:
         #     self.certificate_key_type_dict[split[10]] = 1
 
-
-
-
     "------------------- Methods --------------------------------------"
     """
     orig_bytes - The number of payload bytes the originator sent.
     resp_bytes - The number of payload bytes the responder sent.
     """
+
     def compute_size_of_flow(self, orig_bytes, resp_bytes):
         try:
             orig_bytes_number = int(orig_bytes)
         except:
-            if orig_bytes != '-':
+            if orig_bytes != "-":
                 # print("Error: orig_bytes has bad format.")
                 pass
             orig_bytes_number = 0
         try:
             resp_bytes_number = int(resp_bytes)
         except:
-            if resp_bytes != '-':
+            if resp_bytes != "-":
                 # print("Error: resp_bytes has bad format.")
                 pass
             resp_bytes_number = 0
@@ -372,8 +368,9 @@ class Connection4tuple(object):
     index meaning
     S0, S1, SF, REJ, S2, S3, RSTO, RSTR, RSTOS0, RSTRH, SH, SHR, OTH,
     """
+
     def add_state_of_connection(self, state):
-        if not(state in self.state_of_connection_dict.keys()):
+        if not (state in self.state_of_connection_dict.keys()):
             self.state_of_connection_dict[state] = 1
         else:
             self.state_of_connection_dict[state] += 1
@@ -390,7 +387,7 @@ class Connection4tuple(object):
         final_flow_list = self.ssl_flow_list + self.not_ssl_flow_list
         flows_times_list = []
         for i in range(len(final_flow_list)):
-            split = final_flow_list[i].split('	')
+            split = final_flow_list[i].split("	")
             flows_times_list.append(float(split[0]))
         sorted_times_list = sorted(flows_times_list)
         T2_1 = None
@@ -431,17 +428,17 @@ class Connection4tuple(object):
     #     return 0
 
     def is_SNI_in_certificate(self, ssl_line, x509_line):
-        ssl_split = ssl_line.split('	')
-        x509_split = x509_line.split('	')
+        ssl_split = ssl_line.split("	")
+        x509_split = x509_line.split("	")
 
         server_name = ssl_split[9]
-        if server_name != '-':
+        if server_name != "-":
             # number of domain in san in x509
-            if x509_split[14] != '-':
-                SAN_dns_list = x509_split[14].split(',')
+            if x509_split[14] != "-":
+                SAN_dns_list = x509_split[14].split(",")
                 for i in range(len(SAN_dns_list)):
-                    if '*' in SAN_dns_list[i]:
-                        SAN_dns_list[i] = SAN_dns_list[i].replace('*', '')
+                    if "*" in SAN_dns_list[i]:
+                        SAN_dns_list[i] = SAN_dns_list[i].replace("*", "")
                 hit = 0
                 for san_dns in SAN_dns_list:
                     if san_dns in server_name:
@@ -450,13 +447,13 @@ class Connection4tuple(object):
                 self.is_SNI_in_san_dns.append(hit)
 
     def is_CN_in_SAN(self, x509_line):
-        x509_split = x509_line.split('	')
-        if x509_split[14] != '-':
+        x509_split = x509_line.split("	")
+        if x509_split[14] != "-":
             CN_part = x509_split[4]
-            SAN_dns_list = x509_split[14].split(',')
+            SAN_dns_list = x509_split[14].split(",")
             for i in range(len(SAN_dns_list)):
-                if '*' in SAN_dns_list[i]:
-                    SAN_dns_list[i] = SAN_dns_list[i].replace('*', '')
+                if "*" in SAN_dns_list[i]:
+                    SAN_dns_list[i] = SAN_dns_list[i].replace("*", "")
             hit_2 = 0
             for san_dns in SAN_dns_list:
                 if san_dns in CN_part:
@@ -465,8 +462,8 @@ class Connection4tuple(object):
             self.is_CN_in_SAN_list.append(hit_2)
 
     def compare_ssl_and_x509_lines(self, ssl_line, x509_line):
-        ssl_split = ssl_line.split('	')
-        x509_split = x509_line.split('	')
+        ssl_split = ssl_line.split("	")
+        x509_split = x509_line.split("	")
 
         ssl_subject = ssl_split[16]
         x509_subject = x509_split[4]
@@ -487,7 +484,7 @@ class Connection4tuple(object):
         if is_founded:
             issuer = None
             for x509_line in x509_lines_arr:
-                x509_split = x509_line.split('	')
+                x509_split = x509_line.split("	")
                 if issuer is not None:
                     x509_subject = x509_split[4]
                     if x509_subject != issuer:
@@ -502,7 +499,7 @@ class Connection4tuple(object):
         founded = False
 
         for x509_line in x509_line_list:
-            x509_split = x509_line.split('	')
+            x509_split = x509_line.split("	")
             # cert_serial = x509_split[3]
             cert_subject = x509_split[4]
             san_dns = x509_split[14]
@@ -547,6 +544,7 @@ class Connection4tuple(object):
     """
     ------------ get methods -----------------
     """
+
     def get_label_of_connection(self):
         if self.malware_label > self.normal_label:
             return "MALWARE"
@@ -613,9 +611,11 @@ class Connection4tuple(object):
 
     def get_SNI_list(self):
         return self.SNI_list
+
     """
     Zero exception method
     """
+
     def check_zero_dividing(self, number, text):
         if number == 0:
             # print(text)

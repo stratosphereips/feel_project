@@ -1,6 +1,4 @@
-
 class CertificateFeatures:
-
     def __init__(self, cert_serial, x509_line):
         self.servernames_dict = dict()
         self.cert_serial = cert_serial
@@ -20,13 +18,13 @@ class CertificateFeatures:
     def process_certificate(self, x509_line):
         self.is_CN_in_SAN(x509_line)
 
-        split = x509_line.split('	')
+        split = x509_line.split("	")
 
         self.certificate_key_length = float(split[11])
 
         # number of domain in san in x509
-        if split[14] != '-':
-            domains = len(split[14].split(','))
+        if split[14] != "-":
+            domains = len(split[14].split(","))
             self.number_san_domains += domains
 
     def add_server_name(self, server_name, label):
@@ -36,9 +34,9 @@ class CertificateFeatures:
         except:
             self.servernames_dict[server_name] = 1
 
-        if 'Malicious' in label:
+        if "Malicious" in label:
             self.malware_labels += 1
-        if 'Benign' in label:
+        if "Benign" in label:
             self.normal_labels += 1
 
     def contain_server_name(self, server_name):
@@ -61,9 +59,9 @@ class CertificateFeatures:
         return False
 
     def add_x509_line(self, x509_line):
-        split = x509_line.split('	')
+        split = x509_line.split("	")
 
-        if split[7] != '-' and split[6] != '-':
+        if split[7] != "-" and split[6] != "-":
             try:
                 current_time = float(split[0])
                 before_date = float(split[6])
@@ -81,14 +79,15 @@ class CertificateFeatures:
             except:
                 # print("Certificate time length is broken.")
                 pass
+
     def is_CN_in_SAN(self, x509_line):
-        x509_split = x509_line.split('	')
-        if x509_split[14] != '-':
+        x509_split = x509_line.split("	")
+        if x509_split[14] != "-":
             CN_part = x509_split[4]
-            SAN_dns_list = x509_split[14].split(',')
+            SAN_dns_list = x509_split[14].split(",")
             for i in range(len(SAN_dns_list)):
-                if '*' in SAN_dns_list[i]:
-                    SAN_dns_list[i] = SAN_dns_list[i].replace('*', '')
+                if "*" in SAN_dns_list[i]:
+                    SAN_dns_list[i] = SAN_dns_list[i].replace("*", "")
             hit_2 = 0
             for san_dns in SAN_dns_list:
                 if san_dns in CN_part:
@@ -110,6 +109,7 @@ class CertificateFeatures:
     """
     ------------- FEATURE ---------------
     """
+
     # 1 CN is there
     # 0 is not there
     # -1 is not define
