@@ -4,6 +4,7 @@ import warnings
 import pandas as pd
 from flwr.common import parameters_to_ndarrays
 from sklearn.model_selection import train_test_split
+from tensorflow.python.keras import metrics
 
 from common.config import Config, Setting
 
@@ -114,21 +115,16 @@ class ADClient(fl.client.NumPyClient):
         mal_dataset = deserialize(config["mal_dataset"])
 
         X_train, X_val, y_train, y_val = self.prepare_local_dataset(mal_dataset)
-        X_train_l = np.concatenate([X_train, y_train.reshape((-1, 1))], axis=1).astype(
-            "float32"
-        )
-        X_val_l = np.concatenate([X_val, y_val.reshape((-1, 1))], axis=1).astype(
-            "float32"
-        )
 
-        num_examples_train = len(X_train_l)
+        num_examples_train = len(X_train)
         num_examples_mal = y_train.sum()
 
         if self.config.setting == Setting.FEDERATED:
-            logger.info("Setting weights")
+            # logger.info("Setting weights")
             self.model.set_weights(parameters)
         else:
-            logger.info("Training locally only, ignoring new weights")
+            pass
+            # logger.info("Training locally only, ignoring new weights")
 
         # Get hyperparameters for this round
         start_epoch: int = config["start_epoch"]
@@ -141,19 +137,18 @@ class ADClient(fl.client.NumPyClient):
         )
         # Train the model using hyperparameters from config
         history = self.model.fit(
-            x=X_train_l,
-            y=X_train_l,
+            x=X_train,
+            y=y_train,
             batch_size=batch_size,
             epochs=start_epoch + epochs,
-            validation_data=(X_val_l, X_val_l),
+            validation_data=(X_val, y_val),
             callbacks=[tensorboard_callback],
             initial_epoch=start_epoch,
         )
-        loss = history.history["total_loss"][0]
-        val_loss = history.history["val_total_loss"][0]
-        val_reconstruction_loss = history.history["val_rec_loss"][0]
-        val_classification_loss = history.history["val_class_loss"][0]
-        val_prox_loss = history.history["val_prox_loss"][0]
+        loss = history.history["loss"][0]
+        val_loss = history.history["val_loss"][0]
+        val_auc = history.history['val_auc'][0]
+
 
         self.last_val_loss = val_loss
 
@@ -165,14 +160,8 @@ class ADClient(fl.client.NumPyClient):
             self.best_val_loss = val_loss
             self.best_round = start_epoch
 
-        # Calculate the threshold based on the local validation data
-        ben_val = X_val[(y_val == 0)[:, 0]]
-        rec = self.model.predict(ben_val)[:, :-1]
-        mse = np.mean(np.power(ben_val - rec, 2), axis=1)
-        self.threshold = get_threshold(ben_val, mse)
-
         cls_pred = self.model.predict(X_val)[:, -1]
-        val_acc = float(((cls_pred > 0.5) == y_val).numpy().mean())
+        val_acc = float(((cls_pred > 0.5) == y_val).mean())
 
         # Return updated model parameters and results
         parameters_prime = self.model.get_weights()
@@ -184,13 +173,10 @@ class ADClient(fl.client.NumPyClient):
             "id": self.client_id,
             "loss": loss,
             "val_loss": val_loss,
-            "val_classification_loss": val_classification_loss,
-            "val_reconstruction_loss": val_reconstruction_loss,
-            "val_prox_loss": val_prox_loss,
             "val_acc": val_acc,
+            "val_auc": val_auc,
             "scaler": self.scaler.dump(),
             "tracker": self.model.tracker.serialize(),
-            "threshold": float(self.threshold),
             "num_mal_examples_train": int(num_examples_mal),
         }
 
@@ -201,8 +187,7 @@ class ADClient(fl.client.NumPyClient):
 
         if self.config.setting == Setting.FEDERATED:
             self.model.set_weights(parameters)
-            self.threshold = config["threshold"]
-            logger.info(f"Client {self.client_id} - threshold: {self.threshold}")
+            logger.info(f"Client {self.client_id}")
             if "scaler" in config:
                 self.scaler = MinMaxScaler.load(config["scaler"])
 
@@ -234,7 +219,7 @@ class ADClient(fl.client.NumPyClient):
         loss = 0.1
 
         y_pred_raw = self.model.predict(X_test)
-        y_pred = (y_pred_raw[:, -1] > 0.5).numpy().T
+        y_pred = (y_pred_raw > 0.5)[:, 0]
 
         conf_matrix = confusion_matrix(y_test, y_pred)
         if conf_matrix.size == 1:
@@ -257,23 +242,6 @@ class ADClient(fl.client.NumPyClient):
         cls_tpr = (cls_tp / num_malware) if num_malicious else np.nan
         cls_fpr = cls_fp / num_benign
 
-        rec = self.model.predict(X_test.astype("float32"))[:, :-1]
-        mse = np.mean(np.power(X_test - rec, 2), axis=1)
-        y_anomaly_pred = (mse > self.threshold).astype("float32")
-
-        anomalies_mask = y_anomaly_pred == 1
-        anomalies_true = y_test[anomalies_mask]
-
-        ad_fp = int((anomalies_true == 0).sum())
-        ad_tp = int((anomalies_true == 1).sum())
-        ad_tn = int((anomalies_true == 0).sum())
-        ad_fn = int((anomalies_true == 1).sum())
-
-        ad_tpr = (ad_tp / num_malware) if num_malicious else np.nan
-        ad_fpr = ad_fp / num_benign
-
-        ad_accuracy = (y_anomaly_pred == y_test).mean()
-
         eval_results = {
             "id": self.client_id,
             "cls_fp": cls_fp,
@@ -284,13 +252,6 @@ class ADClient(fl.client.NumPyClient):
             "cls_fpr": cls_fpr,
             "class_accuracy": cls_acc,
             "confusion_matrix": serialize(conf_matrix),
-            "ad_fp": ad_fp,
-            "ad_tp": ad_tp,
-            "ad_tn": ad_tn,
-            "ad_fn": ad_fn,
-            "ad_tpr": ad_tpr,
-            "ad_fpr": ad_fpr,
-            "ad_acc": ad_accuracy,
         }
 
         return loss, {
@@ -319,7 +280,7 @@ class ADClient(fl.client.NumPyClient):
         X_train, y_train = self._prepare_local_dataset(X_train, self.y_train, mal_train)
         X_val, y_val = self._prepare_local_dataset(X_val, self.y_val, mal_val)
 
-        return X_train, X_val, y_train, y_val
+        return tf.Tensor(X_train), tf.Tensor(X_val), tf.Tensor(y_train), tf.Tensor(y_val)
 
     @staticmethod
     def _prepare_local_dataset(X, y, mal):
@@ -381,14 +342,13 @@ def main(client_id: int, day: int, config_path: str = None, **overrides) -> None
         day, client_id, config
     )
 
-    disable_classifier = (y_train == 1).sum() < 1
     # Load and compile Keras model
     if config.model.type == 'SimpleClassifier':
         model = SimpleClassifier(config)
     else:
         model = MultiHeadAutoEncoder(config)
 
-    model.compile()
+    model.compile(metrics=['BinaryCrossentropy', 'AUC', 'Accuracy'])
 
     if config.setting == Setting.LOCAL and day > 1 and config.load_model:
         model.load_weights(config.model_file(day - 1, client_id))

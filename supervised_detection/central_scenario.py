@@ -12,7 +12,7 @@ import datetime
 from matplotlib import pyplot as plt
 
 from common.config import Config
-from common.models import get_classification_model, MultiHeadAutoEncoder
+from common.models import get_classification_model, MultiHeadAutoEncoder, SimpleClassifier
 from common.data_loading import load_all_data, load_centralized_data
 from common.utils import MinMaxScaler, pprint_cm, get_threshold, plot_embedding
 from pathlib import Path
@@ -47,8 +47,8 @@ def main(day: int, config=None, **overrides):
     day = day
 
     tf.keras.utils.set_random_seed(config.seed)
-    model = MultiHeadAutoEncoder(config)
-    model.compile()
+    model = SimpleClassifier(config)
+    model.compile(metrics=['BinaryCrossentropy', 'AUC', 'Accuracy'])
     if config.load_model and day > 1 and config.model_file(day - 1).exists():
         model.load_weights(config.model_file(day - 1))
         epochs = config.server.num_rounds_other_days
@@ -68,11 +68,11 @@ def main(day: int, config=None, **overrides):
         scaler.transform(X_test),
     )
 
-    X_train = np.concatenate([X_train, y_train.reshape(-1, 1)], axis=1).astype(
+    X_train = X_train.astype(
         "float32"
     )
-    X_val = np.concatenate([X_val, y_val.reshape(-1, 1)], axis=1).astype("float32")
-    X_test = np.concatenate([X_test, y_test.reshape(-1, 1)], axis=1)
+    X_val = X_val.astype("float32")
+    X_test = X_test
 
     logs_dir = Path(f"../logs/fit/centralized") / datetime.datetime.now().strftime(
         "%Y%m%d-%H%M%S"
@@ -82,25 +82,25 @@ def main(day: int, config=None, **overrides):
     )
 
     eval_callback = EvaluateCallback(
-        model, X_test[:, :-1], y_test, X_val[:, :-1], y_val
+        model, X_test, y_test, X_val, y_val
     )
 
     history = model.fit(
         x=X_train,
-        y=X_train,
+        y=y_train,
         shuffle=True,
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
-        validation_data=(X_val, X_val),
+        validation_data=(X_val, y_val),
         callbacks=[tensorboard_callback, eval_callback],
     )
 
     model.set_weights(eval_callback.best_weights)
 
-    y_pred_raw = model.predict(X_test[:, :-1])
+    y_pred_raw = model.predict(X_test)
 
     print(y_pred_raw)
-    y_pred = (y_pred_raw[:, -1] > 0.5).astype(float).T
+    y_pred = (y_pred_raw[:, 0] > 0.5).astype(float).T
 
     report = classification_report(
         y_test, y_pred, target_names=["Benign", "Malicious"], output_dict=True
@@ -127,33 +127,6 @@ def main(day: int, config=None, **overrides):
 
     pprint_cm(conf_matrix, ["Benign", "Malicious"])
 
-    X_val_ben = X_val[y_val == 0, :-1]
-    rec_val = model.predict(X_val_ben)[:, :-1]
-    mse_val = np.mean(np.power(X_val_ben - rec_val, 2), axis=1)
-    th = get_threshold(X_val_ben, mse_val)
-
-    print(f"Calculated threshold: {th:.5f}")
-
-    rec = model.predict(X_test.astype("float32")[:, :-1])[:, :-1]
-    mse = np.mean(np.power(X_test[:, :-1] - rec, 2), axis=1)
-    y_anomaly_pred = (mse > th).astype("float32")
-
-    anomalies_mask = y_anomaly_pred == 1
-    anomalies_true = y_test[anomalies_mask]
-
-    fp = int((anomalies_true == 0).sum())
-    tp = int((anomalies_true == 1).sum())
-    tn = len(y_test) - fp
-
-    tpr = tp / num_malware
-    fpr = fp / num_benign
-
-    accuracy = (y_anomaly_pred == y_test).mean()
-
-    print(f"Centralized AD accuracy: {100*accuracy:.2f}%")
-    print(f"Centralized AD tpr: {100*tpr:.2f}%")
-    print(f"Centralized AD fpr: {100*fpr:.2f}%")
-
     # saving model and results
     model.save_weights(config.model_file(day))
     with config.results_file(day).open("wb") as f:
@@ -173,20 +146,15 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
         self.best_loss = np.inf
 
     def on_epoch_end(self, epoch, logs=None):
-        total_loss = logs["val_total_loss"]
+        total_loss = logs["val_loss"]
         if total_loss <= self.best_loss:
             self.best_loss = total_loss
             self.best_weights = deepcopy(self.model.get_weights())
 
-        ben_val = self.X_val[(self.y_val == 0)]
-        rec = self.model.predict(ben_val)[:, :-1]
-        mse = np.mean(np.power(ben_val - rec, 2), axis=1)
-        threshold = get_threshold(ben_val, mse)
-
         num_malicious = self.y_test.sum()
 
         y_pred_raw = self.model.predict(self.X_test)
-        y_pred = (y_pred_raw[:, -1] > 0.5).numpy().astype(float).T
+        y_pred = (y_pred_raw[:, -1] > 0.5).astype(float).T
 
         cls_acc = (y_pred == self.y_test).mean()
 
@@ -206,24 +174,6 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
         cls_tpr = (cls_tp / num_malware) if num_malicious else np.nan
         cls_fpr = cls_fp / num_benign
 
-        rec = self.model.predict(self.X_test.astype("float32"))[:, :-1]
-        mse = np.mean(np.power(self.X_test - rec, 2), axis=1)
-        y_anomaly_pred = (mse > threshold).astype("float32")
-
-        anomalies_mask = y_anomaly_pred == 1
-        anomalies_true = self.y_test[anomalies_mask]
-
-        ad_fp = int((anomalies_true == 0).sum())
-        ad_tp = int((anomalies_true == 1).sum())
-
-        anomalies_false = self.y_test[y_anomaly_pred == 0]
-        ad_tn = int((anomalies_false == 0).sum())
-        ad_fn = int((anomalies_false == 1).sum())
-
-        ad_tpr = (ad_tp / num_malware) if num_malicious else np.nan
-        ad_fpr = ad_fp / num_benign
-
-        ad_accuracy = (y_anomaly_pred == self.y_test).mean()
         eval_results = {
             "cls_fp": cls_fp,
             "cls_tp": cls_tp,
@@ -231,14 +181,7 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
             "cls_fn": cls_fn,
             "cls_tpr": cls_tpr,
             "cls_fpr": cls_fpr,
-            "class_accuracy": cls_acc,
-            "ad_fp": ad_fp,
-            "ad_tp": ad_tp,
-            "ad_tn": ad_tn,
-            "ad_fn": ad_fn,
-            "ad_tpr": ad_tpr,
-            "ad_fpr": ad_fpr,
-            "ad_acc": ad_accuracy,
+            "class_accuracy": cls_acc
         }
         for key, value in eval_results.items():
             logs[key] = value

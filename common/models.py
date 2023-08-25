@@ -2,12 +2,13 @@ from abc import ABC
 from functools import reduce
 from typing import Dict
 
+import keras.callbacks
 import tensorflow as tf
 from pathlib import Path
 import numpy as np
 from copy import deepcopy
 
-from common.config import Config
+from common.config import Config, Setting
 from common.utils import deserialize, serialize
 from sklearn.metrics import log_loss
 
@@ -124,11 +125,11 @@ class FeelModel(tf.keras.Model, ABC):
 
         if config.model.optimizer == "Adam":
             self.optimizer = tf.keras.optimizers.Adam(
-                learning_rate=config.model.learning_rate
+                learning_rate=config.model.learning_rate if config.setting != Setting.CENTRALIZED else config.server.learning_rate
             )
         elif config.model.optimizer == "SGD":
             self.optimizer = tf.keras.optimizers.legacy.SGD(
-                learning_rate=config.model.learning_rate
+                learning_rate=config.model.learning_rate if config.setting != Setting.CENTRALIZED else config.server.learning_rate
             )
 
         self.loss_tracker = _LossTracker()
@@ -138,7 +139,7 @@ class FeelModel(tf.keras.Model, ABC):
 
     def compile(self, **kwargs):
         super(FeelModel, self).compile(self.optimizer, loss=self.loss_tracker, **kwargs)
-        self(np.zeros((1, self.input_size + 1)))
+        self(np.zeros((1, self.input_size)))
 
 
 class ProximalLoss(tf.keras.losses.Loss):
@@ -214,6 +215,7 @@ class SimpleClassifier(FeelModel):
 
         self.dense_output = tf.keras.layers.Dense(1, activation='sigmoid')
 
+        self.prev_weights = None
         if config.model.proximal:
             self.register_loss_function(
                 ProximalLoss(self, config.model.mu, self.tracker.prox_loss)
@@ -231,6 +233,20 @@ class SimpleClassifier(FeelModel):
         x = self.dropout2(x, training=training)
 
         return self.dense_output(x)
+
+    # @property
+    # def metrics(self):
+    #     return self.tracker.get_trackers()
+
+    def set_weights(self, weights):
+        super().set_weights(weights)
+        # self.predict(np.zeros((32, 36)))
+        self.prev_weights = deepcopy(weights)
+
+    def eval(self, X, y_true):
+        y_pred = self.predict(X)
+        return y_pred, log_loss(y_true, y_pred)
+
 
 
 
@@ -343,7 +359,7 @@ class MultiHeadAutoEncoder(FeelModel):
         return mse, y_pred, log_loss(y_true, y_pred)
 
 
-class MetricsTracker:
+class MetricsTracker():
     def __init__(
         self,
         *,

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-experiments=("exp_sup_v1_True_v2_False_1800s_2d" "exp_sup_v1_True_v2_False_1800s_3d" "exp_sup_v1_True_v2_False_1800s")
+experiments=("exp_sup_v1_True_v2_True_1800s_2d_scenario" "exp_sup_v1_True_v2_True_1800s_3d_scenario" "exp_sup_v1_True_v2_True_1800s_scenario")
 
 PROJECT_DIR="$(readlink -f ..)"
 export PYTHONPATH="${PYTHONPATH}:${PROJECT_DIR}"

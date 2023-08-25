@@ -129,6 +129,8 @@ class Config(ConfigTree):
         if not isinstance(dataset_list, list):
             dataset_list = [dataset_list]
         for dataset in dataset_list:
+            if "__" in dataset:
+                continue
             if "_" in dataset:
                 dataset_id, day = dataset.split("_")
             else:

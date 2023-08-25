@@ -1,4 +1,5 @@
 import os
+import time
 import warnings
 
 from flwr.server import ClientManager
@@ -48,10 +49,11 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         self.prev_median_loss = np.inf
         self.scaler = None
         self.epoch = 0
-        self.threshold = 100
         self.best_val_params = None
         self.best_round = -1
         self.best_val_loss = np.inf
+        self.best_val_acc = -np.inf
+        self.best_val_auc = -np.inf
         self.val_losses = []
         self.val_acc = []
 
@@ -71,30 +73,17 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             with self.config.scaler_file(self.day).open("wb") as fb:
                 pickle.dump(self.scaler, fb)
 
-        classification_losses = np.array(
-            [r.metrics["val_classification_loss"] for _, r in results]
-        )
-        reconstruction_losses = np.array(
-            [r.metrics["val_reconstruction_loss"] for _, r in results]
-        )
-        prox_losses = np.array([r.metrics["val_prox_loss"] for _, r in results])
-        print(
-            f"\nClassification losses after round {server_round}: \n{classification_losses}\n"
-            f"median: {np.median(classification_losses)}\t "
-            f"max is client {np.argmax(classification_losses)}: {np.max(classification_losses)}\n"
-        )
+        classification_losses = np.array([r.metrics['val_loss'] for _, r in results])
+        #prox_losses = np.array([r.metrics['val_prox_loss'] for _, r in results])
+        print(f'\nClassification losses after round {server_round}: \n{classification_losses}\n'
+              f'median: {np.median(classification_losses)}\t '
+              f'max is client {np.argmax(classification_losses)}: {np.max(classification_losses)}\n')
 
-        print(
-            f"\nReconstruction losses after round {server_round}: \n{reconstruction_losses}\n"
-            f"median: {np.median(reconstruction_losses)}\t "
-            f"max is client {np.argmax(reconstruction_losses)}: {np.max(reconstruction_losses)}\n"
-        )
-
-        print(
-            f"\nProximal losses after round {server_round}: \n{prox_losses}\n"
-            f"median: {np.median(prox_losses)}\t "
-            f"max is client {np.argmax(prox_losses)}: {np.max(prox_losses)}\n"
-        )
+        # print(
+        #     f"\nProximal losses after round {server_round}: \n{prox_losses}\n"
+        #     f"median: {np.median(prox_losses)}\t "
+        #     f"max is client {np.argmax(prox_losses)}: {np.max(prox_losses)}\n"
+        # )
 
         n_examples = sum((r.num_examples for _, r in results))
         val_accs = np.array([r.metrics["val_acc"] * r.num_examples for _, r in results])
@@ -105,29 +94,29 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             / n_examples
         )
 
+        val_aucs = np.array([r.metrics["val_acc"] * r.num_examples for _, r in results])
+        val_auc = val_accs.sum() / n_examples
+
         self.val_acc.append((server_round, val_acc))
         self.val_losses.append((server_round, val_loss))
-        
-        ths = [r.metrics["threshold"] * r.num_examples for _, r in results if r != None]
-        examples = [r.num_examples for _, r in results if r != None]
 
-        # Aggregate and print custom metric
-        weighted_th = sum(ths) / sum(examples)
-        print(
-            f"[*] Round {server_round} threshold weighted avg from client results: {weighted_th:.5f}"
-        )
-
-        self.threshold = weighted_th
 
         print(f"Aggregating {len(results)} results")
         weights, metrics_aggregated = super().aggregate_fit(
             server_round, results, failures
         )
 
-        if val_loss <= self.best_val_loss:
+        print(
+            f"[*] Round {server_round} val loss: {val_loss}, val acc: {val_acc}, val auc: {val_auc}"
+        )
+
+        if val_acc > self.best_val_acc:
             print(
-                f"[*] Round {server_round} best val loss so far: {val_loss}, saving model"
+                "\t\t=============\n"
+                f"[*] Round {server_round} best val acc so far: {val_acc}, saving model\n"
+                "\t\t============="
             )
+            self.best_val_acc = val_acc
             self.best_val_params = parameters_to_ndarrays(weights)
             self.best_val_loss = val_loss
             self.best_round = server_round
@@ -147,18 +136,18 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             return None
 
         results = [result for result in results if result[1].num_examples]
-        print(
-            "============================\n   Classification Results   \n============================"
-        )
+        # print(
+        #     "============================\n   Classification Results   \n============================"
+        # )
         cls_fp = np.sum([r.metrics["cls_fp"] for _, r in results if r != None])
-        print(
-            f"[*] Round {server_round} total number of ben. anomalies from client results: {int(cls_fp)}"
-        )
+        # print(
+        #     f"[*] Round {server_round} total number of ben. anomalies from client results: {int(cls_fp)}"
+        # )
 
         cls_tp = np.sum([r.metrics["cls_tp"] for _, r in results if r != None])
-        print(
-            f"[*] Round {server_round} total number of mal. anomalies from client results: {int(cls_tp)}"
-        )
+        # print(
+        #     f"[*] Round {server_round} total number of mal. anomalies from client results: {int(cls_tp)}"
+        # )
 
         # Weigh accuracy of each client by number of examples used
         accuracies = [
@@ -170,16 +159,16 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
 
         # Aggregate and print custom metric
         accuracy_aggregated = 100 * sum(accuracies) / sum(examples)
-        print(
-            f"[*] Round {server_round} accuracy weighted avg from client results: {accuracy_aggregated:.2f}%"
-        )
+        # print(
+        #     f"[*] Round {server_round} accuracy weighted avg from client results: {accuracy_aggregated:.2f}%"
+        # )
 
         accuracies = np.mean(
             [r.metrics["class_accuracy"] for _, r in results if r != None]
         )
-        print(
-            f"[*] Round {server_round} accuracy avg from client results: {100 * accuracies:.2f}%"
-        )
+        # print(
+        #     f"[*] Round {server_round} accuracy avg from client results: {100 * accuracies:.2f}%"
+        # )
 
         # Weigh TPR of each client by number of examples used
         cls_tprs = np.array(
@@ -188,13 +177,13 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         cls_tprs = cls_tprs[~np.isnan(cls_tprs)]
         # Aggregate and print custom metric
         cls_tpr_aggregated = 100 * sum(cls_tprs) / sum(examples)
-        print(
-            f"[*] Round {server_round} TPR weighted avg from client results: {cls_tpr_aggregated:.2f}%"
-        )
+        # print(
+        #     f"[*] Round {server_round} TPR weighted avg from client results: {cls_tpr_aggregated:.2f}%"
+        # )
         cls_tprs = np.mean([r.metrics["cls_tpr"] for _, r in results if r != None])
-        print(
-            f"[*] Round {server_round} TPR avg from client results: {100 * cls_tprs:.2f}%"
-        )
+        # print(
+        #     f"[*] Round {server_round} TPR avg from client results: {100 * cls_tprs:.2f}%"
+        # )
 
         # Weigh FPR of each client by number of examples used
         cls_fprs = np.array(
@@ -207,13 +196,13 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         cls_fprs = cls_fprs[~np.isnan(cls_fprs)]
         # Aggregate and print custom metric
         cls_fpr_aggregated = 100 * sum(cls_fprs) / sum(examples)
-        print(
-            f"[*] Round {server_round} FPR weighted avg from client results: {cls_fpr_aggregated:.2f}%"
-        )
+        # print(
+        #     f"[*] Round {server_round} FPR weighted avg from client results: {cls_fpr_aggregated:.2f}%"
+        # )
         cls_fprs = np.mean([1 - r.metrics["cls_fpr"] for _, r in results if r != None])
-        print(
-            f"[*] Round {server_round} FPR avg from client results: {100 * cls_fprs:.2f}%"
-        )
+        # print(
+        #     f"[*] Round {server_round} FPR avg from client results: {100 * cls_fprs:.2f}%"
+        # )
 
         if self.config.setting == Setting.LOCAL:
             g_conf_matrices = np.array(
@@ -234,75 +223,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             conf_matrix = conf_matrices.sum(axis=0)
             pprint_cm(conf_matrix, ["Benign", "Malicious"])
 
-        print(
-            "===============================\n   Anomaly detection Results   \n==============================="
-        )
-        ad_fp = np.sum([r.metrics["ad_fp"] for _, r in results if r != None])
-        print(
-            f"[*] Round {server_round} total number of ben. anomalies from client results: {int(ad_fp)}"
-        )
-
-        ad_tp = np.sum([r.metrics["ad_tp"] for _, r in results if r != None])
-        print(
-            f"[*] Round {server_round} total number of mal. anomalies from client results: {int(ad_tp)}"
-        )
-
-        # Weigh accuracy of each client by number of examples used
-        accuracies = [
-            r.metrics["class_accuracy"] * r.num_examples
-            for _, r in results
-            if r != None
-        ]
-        examples = [r.num_examples for _, r in results if r != None]
-
-        # Aggregate and print custom metric
-        accuracy_aggregated = 100 * sum(accuracies) / sum(examples)
-        print(
-            f"[*] Round {server_round} accuracy weighted avg from client results: {accuracy_aggregated:.2f}%"
-        )
-
-        accuracies = np.mean(
-            [r.metrics["class_accuracy"] for _, r in results if r != None]
-        )
-        print(
-            f"[*] Round {server_round} accuracy avg from client results: {100 * accuracies:.2f}%"
-        )
-
-        # Weigh TPR of each client by number of examples used
-        ad_tprs = np.array(
-            [r.metrics["ad_tpr"] * r.num_examples for _, r in results if r != None]
-        )
-        ad_tprs = ad_tprs[~np.isnan(ad_tprs)]
-        # Aggregate and print custom metric
-        ad_tpr_aggregated = 100 * sum(ad_tprs) / sum(examples)
-        print(
-            f"[*] Round {server_round} TPR weighted avg from client results: {ad_tpr_aggregated:.2f}%"
-        )
-        ad_tprs = np.mean([r.metrics["ad_tpr"] for _, r in results if r != None])
-        print(
-            f"[*] Round {server_round} TPR avg from client results: {100 * ad_tprs:.2f}%"
-        )
-
-        # Weigh FPR of each client by number of examples used
-        ad_fprs = np.array(
-            [
-                (1 - r.metrics["ad_fpr"]) * r.num_examples
-                for _, r in results
-                if r != None
-            ]
-        )
-        ad_fprs = ad_fprs[~np.isnan(ad_fprs)]
-        # Aggregate and print custom metric
-        ad_fpr_aggregated = 100 * sum(ad_fprs) / sum(examples)
-        print(
-            f"[*] Round {server_round} FPR weighted avg from client results: {ad_fpr_aggregated:.2f}%"
-        )
-        ad_fprs = np.mean([1 - r.metrics["cls_fpr"] for _, r in results if r != None])
-        print(
-            f"[*] Round {server_round} FPR avg from client results: {100 * ad_fprs:.2f}%"
-        )
-
-        # Call aggregate_evaluate from base class 
+        # Call aggregate_evaluate from base class (FedAvg)
         return super().aggregate_evaluate(server_round, results, failures)
 
     def fit_config(self, rnd: int):
@@ -311,8 +232,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
 
         config = {
             "start_epoch": self.epoch,
-            "local_epochs": self.config.local_epochs(rnd),  # 1 if rnd < 2 else 2,
-            "threshold": self.threshold,
+            "local_epochs": self.config.local_epochs(rnd),
             "mal_dataset": serialize(mal_data),
         }
 
@@ -324,7 +244,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
         batches) during rounds one to three, then increase to ten local
         evaluation steps.
         """
-        config = {"val_steps": 64, "threshold": self.threshold}
+        config = {"val_steps": 64}
         if rnd > 1:
             config["scaler"] = serialize(self.scaler)
 
@@ -359,21 +279,7 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
                     metric_values, weights=client_examples
                 )
 
-        matrix_metrics = {
-            "cls_tp",
-            "cls_tn",
-            "cls_fp",
-            "cls_fn",
-            "ad_tp",
-            "ad_tn",
-            "ad_fp",
-            "ad_fn",
-            "ad_tp",
-            "ad_tn",
-            "ad_fp",
-            "ad_fn",
-            "val_loss",
-        }
+        matrix_metrics = {'cls_tp', 'cls_tn', 'cls_fp', 'cls_fn', 'val_loss'}
         for matrix_el in matrix_metrics:
             for _, client_m in client_metrics:
                 if matrix_el not in client_m:
@@ -381,8 +287,8 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
                 metrics[f'{matrix_el}_{client_m["id"]:02}'] = client_m[matrix_el]
 
         return metrics
-    
-    
+
+
 def get_eval_fn(model: MultiHeadAutoEncoder, day: int, experiment_config: Config):
     """Return an evaluation function for server-side evaluation."""
 
@@ -405,28 +311,14 @@ def get_eval_fn(model: MultiHeadAutoEncoder, day: int, experiment_config: Config
         else:
             scaler = MinMaxScaler().from_min_max(-10 * np.ones(36), 10 * np.ones(36))
 
-        if config == {}:
-            print("Config is empty")
-            threshold = 100
-        else:
-            threshold = config["threshold"]
 
         X_test_ = scaler.transform(X_test)
 
         # Detect all the samples which are anomalies.
-        mse, y_pred, bce = model.eval(X_test_, y_test)
+        y_pred, bce = model.eval(X_test_, y_test)
 
-        y_ad_pred = (mse > threshold).astype(float).T
         y_cls_pred = (y_pred > 0.5).astype(float)
 
-
-        ad_report = classification_report(
-            y_test,
-            y_ad_pred,
-            output_dict=True,
-            labels=[0.0, 1.0],
-            target_names=["Benign", "Malicious"],
-        )
         supervised_report = classification_report(
             y_test,
             y_cls_pred,
@@ -434,10 +326,8 @@ def get_eval_fn(model: MultiHeadAutoEncoder, day: int, experiment_config: Config
             labels=[0.0, 1.0],
             target_names=["Benign", "Malicious"],
         )
-        
 
-        report = {f"ad_{key}": val for key, val in ad_report.items()}
-        report.update({f"sup_{key}": val for key, val in supervised_report.items()})
+        report = {f"sup_{key}": val for key, val in supervised_report.items()}
         # Detect all the samples which are anomalies.
 
         print("Evaluate confusion matrix")
@@ -448,7 +338,7 @@ def get_eval_fn(model: MultiHeadAutoEncoder, day: int, experiment_config: Config
             y_cls_pred_holdout = (y_pred_holdout > 0.5).astype(float)
             print(f"Detected {y_cls_pred_holdout.sum()} out of {len(y_cls_pred_holdout)} holdout samples. Holdout accuracy: {y_cls_pred_holdout.mean()}")
 
-        return bce + mse.sum(), report
+        return bce, report
 
     return evaluate
 
