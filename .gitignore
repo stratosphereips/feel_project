@@ -131,3 +131,7 @@ dmypy.json
 logs/
 *.npz
 models/
+data/
+experiments/
+tmp/
+.idea

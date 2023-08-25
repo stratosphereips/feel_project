@@ -100,8 +100,8 @@ class FeaturesGenerator:
                         str(directory),
                     ]
                 )
-
-            combine_features.main(temp_dir_path, output_dir, self.ip_map)
+            day = int(output_dir.name[-1])
+            combine_features.main(temp_dir_path, output_dir, day, ip_map=self.ip_map)
 
     def _save_ip_map(self, file):
         df = pd.DataFrame(self.ip_map.items(), columns=["orig_ip", "obfuscated_ip"])

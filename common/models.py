@@ -31,7 +31,7 @@ def get_ad_model(dropout=0.2):
             tf.keras.layers.Dense(36, activation="elu"),
         ]
     )
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss="mse")
+    model.compile(optimizer=tf.keras.optimizers.legacy.Adam(learning_rate=0.001), loss="mse")
     return model
 
 
@@ -127,7 +127,7 @@ class FeelModel(tf.keras.Model, ABC):
                 learning_rate=config.model.learning_rate
             )
         elif config.model.optimizer == "SGD":
-            self.optimizer = tf.keras.optimizers.SGD(
+            self.optimizer = tf.keras.optimizers.legacy.SGD(
                 learning_rate=config.model.learning_rate
             )
 
@@ -138,7 +138,7 @@ class FeelModel(tf.keras.Model, ABC):
 
     def compile(self, **kwargs):
         super(FeelModel, self).compile(self.optimizer, loss=self.loss_tracker, **kwargs)
-        self.predict(np.zeros((1, self.input_size)))
+        self(np.zeros((1, self.input_size + 1)))
 
 
 class ProximalLoss(tf.keras.losses.Loss):
@@ -183,8 +183,8 @@ class SimpelAutoEncoder(FeelModel):
     def __init__(self, config: Config):
         super().__init__(config)
         latent_dim = config.model.latent_dim
-        self.decoder = Decoder(36, latent_dim=latent_dim)
-        self.encoder = Encoder(36, latent_dim=latent_dim)
+        self.encoder = Encoder(latent_dim=latent_dim)
+        self.decoder = Decoder(36)
         self.register_loss_function(tf.keras.losses.MeanSquaredError())
 
     def call(self, inputs, training=None, mask=None):
@@ -193,6 +193,45 @@ class SimpelAutoEncoder(FeelModel):
         )
         reconstructed = self.decoder(embedded)
         return reconstructed
+
+
+class SimpleClassifier(FeelModel):
+    def __init__(self, config: Config):
+        super().__init__(config)
+
+        self.tracker = MetricsTracker(
+            classification=True,
+            proximal=config.model.proximal,
+        )
+
+        self.dense1 = tf.keras.layers.Dense(64, activation='elu')
+        self.batch_norm1 = tf.keras.layers.BatchNormalization()
+        self.dropout1 = tf.keras.layers.Dropout(config.model.dropout)
+
+        self.dense2 = tf.keras.layers.Dense(32, activation='elu')
+        self.batch_norm2 = tf.keras.layers.BatchNormalization()
+        self.dropout2 = tf.keras.layers.Dropout(config.model.dropout)
+
+        self.dense_output = tf.keras.layers.Dense(1, activation='sigmoid')
+
+        if config.model.proximal:
+            self.register_loss_function(
+                ProximalLoss(self, config.model.mu, self.tracker.prox_loss)
+            )
+
+        self.register_loss_function(tf.keras.losses.BinaryCrossentropy(from_logits=True))
+
+    def call(self, inputs, training=None, mask=None):
+        x = self.dense1(inputs)
+        x = self.batch_norm1(x, training=training)
+        x = self.dropout1(x, training=training)
+
+        x = self.dense2(x)
+        x = self.batch_norm2(x, training=training)
+        x = self.dropout2(x, training=training)
+
+        return self.dense_output(x)
+
 
 
 class MultiHeadAutoEncoder(FeelModel):
@@ -218,8 +257,9 @@ class MultiHeadAutoEncoder(FeelModel):
         self.decoder = Decoder(36)
         self.decoder.trainable = False
 
-        self.classifier = ClassifierHead(config.model.classifier_hidden, 2)
-        self.classifier.trainable = not self.disable_classifier
+        if not self.disable_classifier:
+            self.classifier = ClassifierHead(config.model.classifier_hidden, 2)
+        #self.classifier.trainable = not self.disable_classifier
 
         self.multihead_loss = MultiHeadLoss(
             self.tracker,
@@ -277,9 +317,11 @@ class MultiHeadAutoEncoder(FeelModel):
     def predict(self, inputs, **kwargs):
         z = self.embed(inputs)
         reconstructed = self.decoder(z)
-        y_pred = self.classifier(z)
-
-        return tf.concat([reconstructed, y_pred], axis=1)  # .numpy()
+        if not self.disable_classifier:
+            y_pred = self.classifier(z)
+            return tf.concat([reconstructed, y_pred], axis=1)
+        else:
+            return reconstructed
 
     def embed(self, inputs):
         embedded = self.encoder(inputs)
@@ -288,14 +330,6 @@ class MultiHeadAutoEncoder(FeelModel):
             z_log_var = self.z_log_var(embedded)
             embedded = self.sampling([z_mean, z_log_var])
         return embedded
-
-    def get_weights(self):
-        weights = super().get_weights()
-        if self.disable_classifier:
-            cls_layers = len(self.classifier.weights)
-            for i, w in enumerate(weights[-cls_layers:]):
-                weights[-cls_layers + i] = np.zeros_like(w)
-        return weights
 
     def set_weights(self, weights):
         super().set_weights(weights)
@@ -329,9 +363,8 @@ class MetricsTracker:
         if kl:
             kl = tf.keras.metrics.Mean(name="kl_loss")
             self._trackers[kl.name] = kl
-        if proximal:
-            proximal = tf.keras.metrics.Mean(name="prox_loss")
-            self._trackers[proximal.name] = proximal
+        proximal = tf.keras.metrics.Mean(name="prox_loss")
+        self._trackers[proximal.name] = proximal
 
     def __add__(self, other: "MetricsTracker"):
         for tracker_name in self._trackers.keys():
@@ -418,7 +451,8 @@ class MultiHeadLoss(tf.keras.losses.Loss):
         )
         if tf.math.is_nan(cross_entropy_loss):
             cross_entropy_loss = self._epsilon
-        self.tracker.class_loss.update_state(cross_entropy_loss)
+        if not self.disable_classifier:
+            self.tracker.class_loss.update_state(cross_entropy_loss)
         total_loss += cross_entropy_loss
 
         reconstruction_loss = (

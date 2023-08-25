@@ -11,7 +11,7 @@ export PYTHONPATH="${PYTHONPATH}:${PROJECT_DIR}"
 echo "Starting server for day ${day}, seed ${seed}, and ${num_clients} clients."
 python server.py --day ${day} &
 
-sleep 5  # Sleep for 3s to give the server enough time to start
+#sleep 5  # Sleep for 3s to give the server enough time to start
 for i in `seq 1 ${num_clients}`; do
     echo "Starting client $i"
     python client.py --day ${day} --client_id ${i} &

@@ -28,12 +28,26 @@ def _split_file(
         return
 
     df = LogToDataFrame().create_dataframe(log_file_path)
+    df.index = df.index.tz_localize('UTC')
+    df.index = df.index.tz_convert('ETC/GMT-2')
+    
     if filter_out_invalid_malware:
         df = _filter_out_invalid_malware(df)
     if "duration" in df.columns:
         df["duration"] = df["duration"].transform(lambda x: x.total_seconds())
+        
+    # Adding a nan line with midnight of the (most common)day to the dataframe, 
+    # so that the time windows accross diferent files match (conn/ssl/x509).
+    # If I wouldn't do that and used e.g. 2h window, then it might be aligned
+    # with even hours for one file and with odd ours with another. 
+    # The nan row is removed once grouped by the time window
+    midnight_timestamp = pd.Series(df.index.map(lambda ts: ts.normalize())).mode()[0]
+    nan_row = pd.DataFrame(index=[midnight_timestamp], columns=df.columns)
+    df = pd.concat([nan_row, df])
+    df = df[df.index >= midnight_timestamp]
 
     for label, bucket_df in list(df.groupby(pd.Grouper(freq=f"{freq}s", label="left"))):
+        bucket_df = bucket_df.dropna(how='all')
         if bucket_df.size == 0:
             continue
         ts = int(label.timestamp())

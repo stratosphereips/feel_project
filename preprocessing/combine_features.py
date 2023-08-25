@@ -3,11 +3,14 @@ from pathlib import Path
 from fire import Fire
 
 
-def main(in_dir, out_dir, ip_map=None, day=0):
+def main(in_dir, out_dir, day, ip_map=None):
     """
     Combine all csv files with features to one
     @param in_dir: Path to a folder where all csv files are.
     @param out_dir: Where to store the final output
+    @param day: The day from which the data originates from.
+    This information is added as an additional column to the output data
+    @param ip_map: Map of IP addresses to arbitrary values used for the anonymization
     """
     if ip_map is None:
         ip_map = {}

@@ -24,13 +24,16 @@ from flwr.common import FitRes, Parameters, Scalar, parameters_to_ndarrays, Metr
 from flwr.server.client_proxy import ClientProxy
 
 from common.utils import MinMaxScaler, serialize, deserialize, pprint_cm
-from common.models import MultiHeadAutoEncoder
+from common.models import MultiHeadAutoEncoder, SimpleClassifier
 from common.data_loading import (
     load_mal_data,
     load_ben_data,
     create_supervised_dataset,
-    load_day_dataset,
+    load_vaccine_data,
+    load_evaluation_data,
+    load_multiple
 )
+import mlflow
 
 
 class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
@@ -104,30 +107,11 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
 
         self.val_acc.append((server_round, val_acc))
         self.val_losses.append((server_round, val_loss))
-
-        # tracker = sum((MetricsTracker.deserialize(r.metrics['tracker']) for _, r in results), MetricsTracker())
-        # for t in tracker.get_trackers():
-        #     print(f"{t.name}: {t.result().numpy()}")
-
-        #
-        # total_losses = np.array([r.metrics['val_loss'] for _, r in results])
-        # threshold = np.median(total_losses) * 100
-        # print(f'Not aggregating results of {(total_losses > threshold).nonzero()} clients, because they are diverging')
-        # results = [(proxy, r) for proxy, r in results if r.metrics['val_loss'] < threshold]
-        #
-        # threshold_previous = self.prev_median_loss * 100
-        # print(f'Not aggregating results of {(total_losses > threshold_previous).nonzero()} clients, '
-        #       f'because they values diverge form last round too much\n\n')
-        # results = [(proxy, r) for proxy, r in results if r.metrics['val_loss'] < threshold_previous]
-        # self.prev_median_loss = min(
-        #     self.prev_median_loss,
-        #     np.median(np.array([r.metrics['val_loss'] for _, r in results]))
-        # )
-
+        
         ths = [r.metrics["threshold"] * r.num_examples for _, r in results if r != None]
         examples = [r.num_examples for _, r in results if r != None]
 
-        # # Aggregate and print custom metric
+        # Aggregate and print custom metric
         weighted_th = sum(ths) / sum(examples)
         print(
             f"[*] Round {server_round} threshold weighted avg from client results: {weighted_th:.5f}"
@@ -318,16 +302,13 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
             f"[*] Round {server_round} FPR avg from client results: {100 * ad_fprs:.2f}%"
         )
 
-        # Call aggregate_evaluate from base class (FedAvg)
+        # Call aggregate_evaluate from base class 
         return super().aggregate_evaluate(server_round, results, failures)
 
     def fit_config(self, rnd: int):
         """ """
-        mal_data = (
-            load_day_dataset(self.config.vaccine(self.day))
-            if self.config.vaccine(self.day)
-            else pd.DataFrame()
-        )
+        mal_data = load_vaccine_data(self.day, self.config)
+
         config = {
             "start_epoch": self.epoch,
             "local_epochs": self.config.local_epochs(rnd),  # 1 if rnd < 2 else 2,
@@ -400,6 +381,76 @@ class AggregateCustomMetricStrategy(fl.server.strategy.FedAdam):
                 metrics[f'{matrix_el}_{client_m["id"]:02}'] = client_m[matrix_el]
 
         return metrics
+    
+    
+def get_eval_fn(model: MultiHeadAutoEncoder, day: int, experiment_config: Config):
+    """Return an evaluation function for server-side evaluation."""
+
+    X_test, y_test = load_evaluation_data(experiment_config, day, experiment_config.seed)
+    print(f"{experiment_config.holdout(day)=}")
+    X_holdout, y_holdout = load_multiple(experiment_config.holdout(day))
+
+    # The `evaluate` function will be called after every round
+    def evaluate(
+        server_round: int,
+        parameters: fl.common.NDArrays,
+        config: Dict[str, fl.common.Scalar],
+    ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
+        model.set_weights(parameters)  # Update model with the latest parameters
+
+        # Read the stored per-feature maximums and minimums
+        if server_round > 1:
+            with experiment_config.scaler_file(day).open("rb") as f:
+                scaler = pickle.load(f)
+        else:
+            scaler = MinMaxScaler().from_min_max(-10 * np.ones(36), 10 * np.ones(36))
+
+        if config == {}:
+            print("Config is empty")
+            threshold = 100
+        else:
+            threshold = config["threshold"]
+
+        X_test_ = scaler.transform(X_test)
+
+        # Detect all the samples which are anomalies.
+        mse, y_pred, bce = model.eval(X_test_, y_test)
+
+        y_ad_pred = (mse > threshold).astype(float).T
+        y_cls_pred = (y_pred > 0.5).astype(float)
+
+
+        ad_report = classification_report(
+            y_test,
+            y_ad_pred,
+            output_dict=True,
+            labels=[0.0, 1.0],
+            target_names=["Benign", "Malicious"],
+        )
+        supervised_report = classification_report(
+            y_test,
+            y_cls_pred,
+            output_dict=True,
+            labels=[0.0, 1.0],
+            target_names=["Benign", "Malicious"],
+        )
+        
+
+        report = {f"ad_{key}": val for key, val in ad_report.items()}
+        report.update({f"sup_{key}": val for key, val in supervised_report.items()})
+        # Detect all the samples which are anomalies.
+
+        print("Evaluate confusion matrix")
+        pprint_cm(confusion_matrix(y_test, y_cls_pred), ["Benign", "Malicious"])
+        if X_holdout.size:
+            X_holdout_ = scaler.transform(X_holdout)
+            y_pred_holdout = model.predict(X_holdout_)[:, -1].numpy()
+            y_cls_pred_holdout = (y_pred_holdout > 0.5).astype(float)
+            print(f"Detected {y_cls_pred_holdout.sum()} out of {len(y_cls_pred_holdout)} holdout samples. Holdout accuracy: {y_cls_pred_holdout.mean()}")
+
+        return bce + mse.sum(), report
+
+    return evaluate
 
 
 def main(day: int, config_path: str = None, **overrides) -> None:
@@ -416,7 +467,11 @@ def main(day: int, config_path: str = None, **overrides) -> None:
 
     tf.keras.utils.set_random_seed(config.seed)
 
-    model = MultiHeadAutoEncoder(config)
+    if config.model.type == 'SimpleClassifier':
+        model = SimpleClassifier(config)
+    else:
+        model = MultiHeadAutoEncoder(config)
+
     model.compile()
 
     if config.load_model and day > 1:
@@ -458,7 +513,7 @@ def main(day: int, config_path: str = None, **overrides) -> None:
         # ),
     )
 
-    X_test, y_test = load_data(config.data_dir, day, config.seed)
+    X_test, y_test = load_evaluation_data(config, day, config.seed)
 
     # X_test = strategy.scaler.transform(X_test)
     # plot_embedding(X_test, y_test, model)
@@ -475,87 +530,6 @@ def main(day: int, config_path: str = None, **overrides) -> None:
     with config.results_file(day).open("wb") as f:
         pickle.dump(results, f)
 
-
-def get_eval_fn(model, day: int, experiment_config: Config):
-    """Return an evaluation function for server-side evaluation."""
-
-    X_test, y_test = load_data(experiment_config.data_dir, day, experiment_config.seed)
-
-    # The `evaluate` function will be called after every round
-    def evaluate(
-        server_round: int,
-        parameters: fl.common.NDArrays,
-        config: Dict[str, fl.common.Scalar],
-    ) -> Optional[Tuple[float, Dict[str, fl.common.Scalar]]]:
-        model.set_weights(parameters)  # Update model with the latest parameters
-
-        # Read the stored per-feature maximums and minimums
-        if server_round > 1:
-            with experiment_config.scaler_file(day).open("rb") as f:
-                scaler = pickle.load(f)
-        else:
-            scaler = MinMaxScaler().from_min_max(-10 * np.ones(36), 10 * np.ones(36))
-
-        if config == {}:
-            print("Config is empty")
-            threshold = 100
-        else:
-            threshold = config["threshold"]
-
-        X_test_ = scaler.transform(X_test)
-
-        # Detect all the samples which are anomalies.
-        mse, y_pred, bce = model.eval(X_test_, y_test)
-
-        y_ad_pred = (mse > threshold).astype(float).T
-        y_cls_pred = (y_pred > 0.5).astype(float)
-
-        ad_report = classification_report(
-            y_test,
-            y_ad_pred,
-            output_dict=True,
-            labels=[0.0, 1.0],
-            target_names=["Benign", "Malicious"],
-        )
-        supervised_report = classification_report(
-            y_test,
-            y_cls_pred,
-            output_dict=True,
-            labels=[0.0, 1.0],
-            target_names=["Benign", "Malicious"],
-        )
-
-        report = {f"ad_{key}": val for key, val in ad_report.items()}
-        report.update({f"sup_{key}": val for key, val in supervised_report.items()})
-        # Detect all the samples which are anomalies.
-
-        print("Evaluate confusion matrix")
-        pprint_cm(confusion_matrix(y_test, y_cls_pred), ["Benign", "Malicious"])
-
-        return bce + mse.sum(), report
-
-    return evaluate
-
-
-def load_data(data_dir, day, seed):
-    ben_train, ben_test = zip(
-        *[
-            load_ben_data(
-                day, client, data_dir, drop_labels=False, drop_four_tuple=True
-            )
-            for client in range(1, 11)
-        ]
-    )
-    X_ben_test = pd.concat(ben_test, axis=0)
-    X_mal_test = pd.concat(
-        load_mal_data(
-            day + 1, data_dir, drop_labels=False, drop_four_tuple=True
-        ).values(),
-        axis=0,
-    )
-    X_test, _, y_test, _ = create_supervised_dataset(X_ben_test, X_mal_test, 0.0, seed)
-
-    return X_test, y_test
 
 
 if __name__ == "__main__":

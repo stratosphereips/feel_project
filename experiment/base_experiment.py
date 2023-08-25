@@ -10,14 +10,18 @@ import shutil
 
 class BaseExperiment:
     def __init__(self, config_path: Path):
+        self.look_up_config_file(config_path)
         self.config_path = config_path
         self.config = Config.load(config_path)
 
-    def run(self):
-        if self.config.experiment_dir.exists():
-            shutil.rmtree(self.config.experiment_dir, ignore_errors=True)
+    @staticmethod
+    def look_up_config_file(config_path):
+        config_dir_path = Path('experiment_configs') / config_path.name
+        if not config_path.exists() and config_dir_path.exists():
+            shutil.copy(config_dir_path, config_path)
 
-        for run in range(self.config.num_runs):
+    def run(self):
+        for run in range(0, self.config.num_runs):
             with self.config_with_random_seed(run) as config_path:
                 for day in range(1, self.config.days + 1):
                     self.run_day(day, config_path)

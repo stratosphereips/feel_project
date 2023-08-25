@@ -87,14 +87,14 @@ def main(day: int, config=None, **overrides):
     model.set_weights(eval_callback.best_weights)
 
     # The number of faulty samples for a 2% FPR (on the training set)
-    rec_val = model.predict(X_val)[:, :-1]
+    rec_val = model.predict(X_val)
     mse_val = np.mean(np.power(X_val - rec_val, 2), axis=1)
     th = get_threshold(X_val, mse_val)
 
     print(f"Calculated threshold: {th:.5f}")
 
     # Measure in the testset
-    rec = model.predict(X_test)[:, :-1]
+    rec = model.predict(X_test)
     mse_ben = np.mean(np.power(X_test - rec, 2), axis=1)
     y_pred = (rec[:, -1] > th).astype(float).T
 
@@ -145,7 +145,7 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
             self.best_weights = deepcopy(self.model.get_weights())
 
         ben_val = self.X_val[(self.y_val == 0)]
-        rec = self.model.predict(ben_val)[:, :-1]
+        rec = self.model.predict(ben_val)
         mse = np.mean(np.power(ben_val - rec, 2), axis=1)
         threshold = get_threshold(ben_val, mse)
 
@@ -154,7 +154,7 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
         num_malware = (self.y_test == 1).sum()
         num_benign = (self.y_test == 0).sum()
 
-        rec = self.model.predict(self.X_test.astype("float32"))[:, :-1]
+        rec = self.model.predict(self.X_test.astype("float32"))
         mse = np.mean(np.power(self.X_test - rec, 2), axis=1)
         y_anomaly_pred = (mse > threshold).astype("float32")
 

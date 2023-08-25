@@ -26,10 +26,9 @@ from common.data_loading import (
     load_mal_data,
     load_ben_data,
     create_supervised_dataset,
-    load_day_dataset,
     load_centralized_data,
 )
-from common.models import get_classification_model, MultiHeadAutoEncoder
+from common.models import get_classification_model, MultiHeadAutoEncoder, SimpleClassifier
 from common.utils import (
     get_threshold,
     serialize_array,
@@ -347,15 +346,10 @@ def load_partition(day: int, client_id: int, config: Config):
     assert day in range(1, 6)
 
     X_ben_train, X_ben_test = load_ben_data(
-        day, client_id, config.data_dir, drop_labels=False
+        day, client_id, config, drop_labels=False
     )
 
-    X_mal_train = load_day_dataset(
-        config.client_malware(client_id, day), drop_labels=False
-    )
-    X_mal_test = load_day_dataset(
-        config.client_malware(client_id, day + 1), drop_labels=False
-    )
+    X_mal_train, X_mal_test = load_mal_data(day, client_id, config, drop_labels=False)
 
     X_train, X_val, y_train, y_val = create_supervised_dataset(
         X_ben_train, X_mal_train, 0.2, config.seed
@@ -389,7 +383,11 @@ def main(client_id: int, day: int, config_path: str = None, **overrides) -> None
 
     disable_classifier = (y_train == 1).sum() < 1
     # Load and compile Keras model
-    model = MultiHeadAutoEncoder(config)
+    if config.model.type == 'SimpleClassifier':
+        model = SimpleClassifier(config)
+    else:
+        model = MultiHeadAutoEncoder(config)
+
     model.compile()
 
     if config.setting == Setting.LOCAL and day > 1 and config.load_model:

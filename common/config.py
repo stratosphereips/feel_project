@@ -1,6 +1,6 @@
 from enum import Enum
 from functools import reduce
-from typing import Optional
+from typing import Optional, List, Iterable, Tuple
 
 import pandas as pd
 from pyhocon import ConfigFactory, ConfigTree, HOCONConverter
@@ -16,9 +16,16 @@ class Setting(Enum):
 
 
 class Config(ConfigTree):
+    omit_default_key = 'omit_default'
+
     @staticmethod
     def load(config_path=None, **overrides):
-        config_paths = [Path("default.conf")] + (
+        if overrides.get(Config.omit_default_key):
+            config_paths = []
+        else:
+            config_paths = [Path("default.conf")]
+
+        config_paths += (
             [Path(config_path)] if config_path else []
         )
         config = Config._parse_files(config_paths)
@@ -37,7 +44,7 @@ class Config(ConfigTree):
 
     @property
     def malware_dir(self):
-        return self.data_dir / "Processed" / "Malware"
+        return self.data_dir / "Malware"
 
     @property
     def experiment_dir(self) -> Path:
@@ -67,21 +74,21 @@ class Config(ConfigTree):
 
     def results_file(self, day: int) -> Path:
         return (
-            self.results_dir / f"day{day}_{self.seed}_{self.setting.value}_results.pckl"
+                self.results_dir / f"day{day}_{self.seed}_{self.setting.value}_results.pckl"
         )
 
     def model_file(self, day: int, client_id=None) -> Path:
         if client_id is not None:
             return (
-                self.model_dir
-                / f"day{day}_{self.seed}_{self.setting.value}_{client_id}_model.h5"
+                    self.model_dir
+                    / f"day{day}_{self.seed}_{self.setting.value}_{client_id}_model.h5"
             )
         return self.model_dir / f"day{day}_{self.seed}_{self.setting.value}_model.h5"
 
     def local_model_file(self, day: int, client_id: int) -> Path:
         return (
-            self.model_dir
-            / f"day{day}_{self.seed}_{self.setting.value}_{client_id}_model.h5"
+                self.model_dir
+                / f"day{day}_{self.seed}_{self.setting.value}_{client_id}_model.h5"
         )
 
     def scaler_file(self, day: int) -> Path:
@@ -93,26 +100,65 @@ class Config(ConfigTree):
         }
         return epoch_config.get(rnd, epoch_config[-1])
 
-    def client_malware(self, client_id: int, day: int) -> Optional[Path]:
-        malware = {int(key): value for key, value in self.client.client_malware.items()}
-        if client_id not in malware or malware[client_id][day - 1][0] == "_":
-            return None
+    def client_train_malware(self, client_id: int, day: int) -> Iterable[Path]:
+        for malware_id, malware_day in self._config_dataset(client_id, day, self.client.client_train_malware):
+            if client_id:
+                yield self.malware_dir / self.malware_dirs[malware_id] / f"Day{malware_day}"
 
-        malware = malware[client_id][day - 1]
-        if "_" in malware:
-            malware_id, malware_day = malware.split("_")
-        else:
-            malware_id, malware_day = malware, day
-        return self.malware_dir / self.malware_dirs[malware_id] / f"Day{malware_day}"
+    def client_test_malware(self, client_id: int, day: int) -> Iterable[Path]:
+        for malware_id, malware_day in self._config_dataset(client_id, day, self.client.client_test_malware):
+            if client_id:
+                yield self.malware_dir / self.malware_dirs[malware_id] / f"Day{malware_day}"
 
-    def vaccine(self, day: int) -> Optional[Path]:
+    def client_ben_train(self, client_id: int, day: int) -> Iterable[Path]:
+        for client_id, dataset_day in self._config_dataset(client_id, day, self.client.client_train_data):
+            if client_id:
+                yield self.data_dir / f'Client{client_id}' / f'Day{dataset_day}'
+
+    def client_ben_test(self, client_id: int, day: int) -> Iterable[Path]:
+        for client_id, dataset_day in self._config_dataset(client_id, day, self.client.client_test_data):
+            if client_id:
+                yield self.data_dir / f'Client{client_id}' / f'Day{dataset_day}'
+
+    def _config_dataset(self, client_id: int, day: int, config_item) -> Iterable[Tuple[str, str]]:
+        dataset_list = {int(key): value for key, value in config_item.items()}
+        if client_id not in dataset_list or dataset_list[client_id][day - 1][0] == "_":
+            return
+
+        dataset_list = dataset_list[client_id][day - 1]
+        if not isinstance(dataset_list, list):
+            dataset_list = [dataset_list]
+        for dataset in dataset_list:
+            if "_" in dataset:
+                dataset_id, day = dataset.split("_")
+            else:
+                dataset_id, day = dataset, day
+            yield dataset_id, day
+
+
+    def vaccine(self, day: int) -> List[Path]:
         if "vaccine_malware" not in self.server:
             return None
-        malware_name = self.server.vaccine_malware[day - 1]
-        if malware_name == "_":
+        return self.get_malware_list(self.server.vaccine_malware, day)
+    
+    def holdout(self, day: int) -> List[Path]:
+        if "holdout_malware" not in self.server:
             return None
-        malware_id, malware_day = malware_name.split("_")
-        return self.malware_dir / self.malware_dirs[malware_id] / f"Day{malware_day}"
+        return self.get_malware_list(self.server.holdout_malware, day)
+    
+    def get_malware_list(self, config_key: list, day: int) -> List[Path]:
+        malware_names = config_key[day - 1]
+        if isinstance(malware_names, str):
+            malware_names = [malware_names]
+            
+        malware_paths = []
+        for malware_name in malware_names:
+            if malware_name == "_":
+                return None
+            malware_id, malware_day = malware_name.split("_")
+            malware_path = self.malware_dir / self.malware_dirs[malware_id] / f"Day{malware_day}"
+            malware_paths.append(malware_path)
+        return malware_paths
 
     @staticmethod
     def _parse_files(files):

@@ -186,7 +186,7 @@ class EvaluateCallback(tf.keras.callbacks.Callback):
         num_malicious = self.y_test.sum()
 
         y_pred_raw = self.model.predict(self.X_test)
-        y_pred = (y_pred_raw[:, -1] > 0.5).astype(float).T
+        y_pred = (y_pred_raw[:, -1] > 0.5).numpy().astype(float).T
 
         cls_acc = (y_pred == self.y_test).mean()
 

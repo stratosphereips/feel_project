@@ -12,6 +12,9 @@ build_anomaly_detection_docker:
 build_experiment_docker:
 	docker build -t janatpa/feel-experiment:latest -f docker/experiment/Dockerfile .
 
+build_experiment_docker_mac:
+	docker buildx build --platform linux/arm64 -t janatpa/feel-experiment:latest -f docker/experiment/Dockerfile --push .
+
 run_client:
 	docker run --network=host --volume "$(DATA_DIR)":/data stratosphere/feel-ad client --client_id $(CLIENT_ID) --day $(DAY) --ip_address $(IP_ADDRESS)
 
