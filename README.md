@@ -1,13 +1,16 @@
 # FEEL project
-Code repository for the FEEL project and Pavel Janata's thesis on Decentralized Federated Learning for
-Network Security
+
+The feel project aims at researching, developing and implementing a federated learning ML model for intrusion detection systems.
+It was implemented by Pavel Janata's and published for his thesis "Decentralized Federated Learning for Network Security".
+
+This project is funded by [NlNet NGI Zero Entrust](https://nlnet.nl/project/Iris-P2P/)
 
 # Goal
 Detect malicious SSL/TLS traffic using federated learning.
 
 # Docker setup 
-You can build docker image for the anomaly detection experiment. 
-To build the image simply run 
+You can build a docker image for the anomaly detection experiment. 
+To build the image, simply run 
 
 ```bash
 make build_anomaly_detection_docker
