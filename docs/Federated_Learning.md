@@ -361,6 +361,9 @@ be represented as:
 For detection, the reconstruction loss is used as an anomalous likelihood.
 Each client derives an anomaly threshold based on its validation data. The
 
+![image](https://github.com/user-attachments/assets/2f0d0d51-ac72-4b86-ab7d-ace76adddc7b)
+
+
 Figure: Architecture of the Neural Network models used in this work. The
 Classifier-only model is derived from the Multi-Head model by removing its
 reconstruction head.
