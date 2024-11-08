@@ -18,6 +18,8 @@ an organization onto a more powerful server, which then serves as a node
 participating in the Federate Learning. This, for example, allows multiple
 organizations to collectively train a model without sharing their data directly
 
+![image](https://github.com/user-attachments/assets/20c17a29-fe6b-4590-bc04-9d462d8e5aed)
+
 
 Figure: Classification of Federated Learning based on the type of participants.
 In cross-device FL, the models are trained in the devices from which the data
@@ -131,6 +133,7 @@ population is large, and the participants in each iteration are sampled. In
 this case, many clients may only be used once, and the local learning rates
 can not be applied.
 
+![image](https://github.com/user-attachments/assets/d61711e7-db8b-42b6-a31c-f9d19350ce13)
 
 
 ## Regularization
@@ -145,10 +148,13 @@ By choosing the function ψ(w, wg), a distance function of the local model
 w, and the latest global model wg, we can ensure that the local models will
 not diverge significantly. Examples of the regularization functions can be
 found in the FedProx, which introduces the proximal term
+![image](https://github.com/user-attachments/assets/cc161a78-2139-474a-8022-84f26f9209b3)
 
 
 where µ is a hyper-parameter of the method. The proximal term is added to
 the loss function as a penalty.
+
+![image](https://github.com/user-attachments/assets/1039bc13-5fb0-4f10-a7eb-7f4e0898b67f)
 
 
 ## Model Weighting
