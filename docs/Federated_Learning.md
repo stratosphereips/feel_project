@@ -90,7 +90,7 @@ Gradient Descent (SGD) and can be used to train a variety of models, including
 Neural Networks, Linear Regression, Support Vector Machine,
 Gradient Boosting Trees, and Random Forests.
 Federated Learning SGD can be implemented with the Federated Averaging
-algorithm (FedAvg) (described in the Federated Optimization section). Since its introduction, new
+algorithm (FedAvg) (described in the [Federated Optimization section](https://github.com/stratosphereips/feel_project/blob/main/docs/Federated_Learning.md#federated-optimization)). Since its introduction, new
 methods were proposed to extend and improve upon it in order to achieve
 better stability, and performance. This includes both the performance of the
 model and the computational efficiency of the training process
@@ -158,7 +158,7 @@ During the model aggregation step on the central server, a weighting scheme
 is often employed. For example, in the FedAvg algorithm, the global model
 can be obtained as a weighted average of the clients’ contributions. Weighting
 is most often employed in cases of data or performance heterogeneity, as
-described in the Challenges of Federated Learning section. Its main purpose is usually to mitigate the tendency
+described in the [Challenges of Federated Learning section](https://github.com/stratosphereips/feel_project/blob/main/docs/Federated_Learning.md#challenges-of-federated-learning). Its main purpose is usually to mitigate the tendency
 of the model to favor clients with higher volumes of training data or available
 resources. However, employing some weighting scheme may require the clients
 to share information about their data which might bring technical and privacy
@@ -196,7 +196,7 @@ Non-IID data is not unique to FL, and it is a challenge with which many ML
 models struggle. Robust statistics is an area of research focusing on methods
 applicable to data coming from a wide range of distributions. Using some
 robust techniques can help with FL on non-IID data. Examples of this can
-be extensions of FedAvg (see the Federated Optimization section), which use a median or trimmed
+be extensions of FedAvg (see the [Federated Optimization section](https://github.com/stratosphereips/feel_project/blob/main/docs/Federated_Learning.md#federated-optimization)), which use a median or trimmed
 mean instead of a simple mean for weight aggregation. These robust
 methods offer resiliency against outliers but at the cost of losing information,
 leading to slower convergence and worse performance.
@@ -267,7 +267,8 @@ updates sent by all the clients. The global model, therefore, had access to a
 larger and more diverse set of data coming from all clients, possibly leading
 to better performance and generalization, compared to a model trained only
 with each client’s local data.
-4.1.1 Solution Architecture
+
+## Solution Architecture
 Our federated learning system consists of a central aggregator and multiple
 clients. The aggregator is a dedicated machine that initializes and coordinates
 the training process. There are ten clients in our system, representing the
@@ -321,7 +322,7 @@ global models less often. We discuss the exact number of rounds and local
 epochs in the following sections describing the individual approaches.
 The aggregator combines metrics using a weighted average with the number
 of clients’ samples as weights. It also produces a global model after each
-round using a process described in the Learning Algorithm section. At the end of the day’s
+round using a process described in the [Learning Algorithm section](https://github.com/stratosphereips/feel_project/blob/main/docs/Federated_Learning.md#learning-algorithm). At the end of the day’s
 training process, the aggregator selects the best-performing model using an
 aggregated validation loss of each model. This model is used as the initial
 model for the next day. We assume that when the model is reused, it can
@@ -375,7 +376,7 @@ model is trained from scratch, ten training rounds are used, and five when
 the model from the previous day is reused. Clients train the model locally for
 one epoch in the first two rounds and for two epochs in the remaining rounds.
 While more local rounds are more communication efficient, as discussed
-in the Challenges of Federated Learning section, it may also lead to divergence in the individual client’s
+in the [Challenges of Federated Learning section](https://github.com/stratosphereips/feel_project/blob/main/docs/Federated_Learning.md#challenges-of-federated-learning), it may also lead to divergence in the individual client’s
 updates. When using the momentum-based methods, the largest steps in the
 parameter space are generally made in the first few epochs. We hope
 that by aggregating after each epoch in the first two rounds, the global model
@@ -467,7 +468,7 @@ a new update to the global model is created using the FedAdam algorithm
 provided in the flower framework. It is a federated variant of the Adam
 optimizer, and as such, it uses momentum when aggregating the client
 updates providing better convergence on the heterogenic data. These learning
-algorithms are described in more detail in the Federated Optimization section
+algorithms are described in more detail in the [Federated Optimization section](https://github.com/stratosphereips/feel_project/blob/main/docs/Federated_Learning.md#federated-optimization)
 
 ## Implementation
 We chose to use a Python-based open-source federated learning framework
@@ -489,8 +490,7 @@ has been used to distribute the vaccines from the aggregator to the clients.
 
 
 
-The code for this work can be found in the repository of the FEEL project:
-https://github.com/stratosphereips/feel_project. This repository contains the implementation of the described methodology, including the code
+The code for this work can be found in this repository. This repository contains the implementation of the described methodology, including the code
 for orchestrating and running experiments and analyzing their results. It also
 includes the preprocessing of raw data into hourly feature vectors used by
 the models. The feature extraction is based on an in part reused from the
@@ -543,8 +543,8 @@ in the case of testing metrics, the sizes of the test datasets were used, with
 the vaccine samples included. The motivation for this is to produce similar
 metrics as if they were computed on a complete dataset from all clients.
 To evaluate our methods, the metrics used are Accuracy (Acc), True
-Positive Rate (TPR), False Positive Rate (FPR) shown in eqs. (2.1) to (2.3)
-and F-score shown in eq. (2.5). Accuracy is a standard metric used to
+Positive Rate (TPR), False Positive Rate (FPR)
+and F-score. Accuracy is a standard metric used to
 evaluate classification and detection models. However, it can not capture
 all the relevant information on its own. TPR indicates what ratio of the
 malicious samples was detected, and FPR shows how much of the benign
