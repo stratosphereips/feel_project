@@ -32,7 +32,16 @@ class BaseExperiment:
         done_file: Path = self.config.experiment_dir / "done"
         done_file.write_text("DONE")
 
-    def rerun_local(self):
+    def rerun_local(self) -> None:
+        """
+        Rerun local experiments for a given number of runs. For each run:
+        - Extract the random seed from the result directory.
+        - Configure the experiment with the extracted seed.
+        - Evaluate the local settings for each day, if configured.
+        - Mark the experiment as completed by writing a 'done_local' file.
+
+        :raises AssertionError: If the experiment directory does not exist.
+        """
         assert self.config.experiment_dir.exists()
 
         for run in range(self.config.num_runs):
@@ -47,7 +56,16 @@ class BaseExperiment:
         done_file: Path = self.config.experiment_dir / "done_local"
         done_file.write_text("DONE")
 
-    def rerun_centralized(self):
+    def rerun_centralized(self) -> None:
+        """
+        Rerun centralized experiments for a given number of runs. For each run:
+        - Extract the random seed from the result directory.
+        - Configure the experiment with the extracted seed.
+        - Run the centralized experiment for each day.
+        - Mark the experiment as completed by writing a 'done_local' file.
+
+        :raises AssertionError: If the experiment directory does not exist.
+        """
         assert self.config.experiment_dir.exists()
 
         for run in range(self.config.num_runs):
@@ -61,7 +79,16 @@ class BaseExperiment:
         done_file: Path = self.config.experiment_dir / "done_local"
         done_file.write_text("DONE")
 
-    def rerun_federated(self):
+    def rerun_federated(self) -> None:
+        """
+        Rerun federated experiments for a given number of runs. For each run:
+        - Extract the random seed from the result directory.
+        - Configure the experiment with the extracted seed.
+        - If the local evaluation setting is enabled, run experiments for each day.
+        - Mark the experiment as completed by writing a 'done_federated' file.
+
+        :raises AssertionError: If the experiment directory does not exist.
+        """
         assert self.config.experiment_dir.exists()
 
         for run in range(self.config.num_runs):
@@ -77,6 +104,14 @@ class BaseExperiment:
         done_file.write_text("DONE")
 
     def run_day(self, day: int, config_path: Path, local=False):
+        """
+        Runs a simulation for a given day by starting server and client processes.
+    
+        Args:
+            day (int): the simulation day.
+            config_path (Path): path to the configuration file.
+            local (bool): whether to run locally or in federated mode (default: False).
+        """
         if local:
             kwargs = {
                 "setting": Setting.LOCAL.value,
