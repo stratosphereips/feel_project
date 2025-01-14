@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 import pandas as pd
 from pathlib import Path
 from fire import Fire

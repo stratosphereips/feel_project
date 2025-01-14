@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 from contextlib import contextmanager
 from multiprocessing import Process
 from pathlib import Path

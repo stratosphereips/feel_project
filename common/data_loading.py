@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split

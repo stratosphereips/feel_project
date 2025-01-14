@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # Author: Frantisek Strasak strasfra[ampersat]fel.cvut.cz
 """
 Read bro files.

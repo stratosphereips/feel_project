@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 class CertificateFeatures:
     def __init__(self, cert_serial, x509_line):
         self.servernames_dict = dict()

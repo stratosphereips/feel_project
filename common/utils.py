@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 import base64
 import numpy as np
 from collections import defaultdict

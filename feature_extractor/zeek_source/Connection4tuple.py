@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """
 This class stores all information for one "connection 4-tuple" object.
 Also it computes features.

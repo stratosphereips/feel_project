@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 import numpy as np
 import pandas as pd
 import tensorflow as tf

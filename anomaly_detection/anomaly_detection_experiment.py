@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 from pathlib import Path
 
 from experiment.base_experiment import BaseExperiment

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 import dataclasses
 from copy import deepcopy
 from pathlib import Path
