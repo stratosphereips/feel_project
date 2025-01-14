@@ -56,6 +56,6 @@ docker run --network=host --volume "$(pwd)/data/":/data stratosphere/feel-ad ser
 
 # Related projects
 
-This project is part of [StratosphereLinuxIPS](https://github.com/stratosphereips/StratosphereLinuxIPS)
+This project is now a submodule of [StratosphereLinuxIPS](https://github.com/stratosphereips/StratosphereLinuxIPS)
 
 
