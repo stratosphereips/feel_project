@@ -53,3 +53,9 @@ or directly
 ```bash
 docker run --network=host --volume "$(pwd)/data/":/data stratosphere/feel-ad server --day 1 --ip_address localhost --load 1 --num_fit_clients=10 --num_evaluate_clients=10
 ```
+
+# Related projects
+
+This project is part of [StratosphereLinuxIPS](https://github.com/stratosphereips/StratosphereLinuxIPS)
+
+
